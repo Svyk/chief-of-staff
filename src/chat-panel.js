@@ -872,7 +872,7 @@ async function handleChatPanelSend() {
   const message = String(chatPanelInput.value || "").trim();
   if (!message) return;
 
-  if (/^\/clear$/i.test(message)) {
+  if (/^\/(clear|new)$/i.test(message)) {
     chatPanelInput.value = "";
     clearChatPanelHistory();
     if (deps.clearConversationContext) deps.clearConversationContext({ persist: true });
