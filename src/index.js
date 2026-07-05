@@ -1,4 +1,4 @@
-import { extractBalancedJsonObjects, extractMcpKeyReference } from "./parse-utils.js";
+import { extractBalancedJsonObjects, extractMcpKeyReference, buildChatTranscriptBlocks } from "./parse-utils.js";
 import {
   initIntentClassifier, classifyIntent, evaluateConfidence,
   clearIntentCache, getCachedClassification
@@ -2076,6 +2076,28 @@ async function writeResponseToTodayDailyPage(userPrompt, responseText) {
   } catch (_) { /* non-fatal */ }
 
   return result;
+}
+
+/**
+ * /export — write the current chat transcript to today's daily page under a
+ * [[Chief of Staff/Transcripts]] header block, so every export aggregates in
+ * that page's linked references. One child block per message; block text is
+ * capped by createRoamBlock's shared 20K truncation. Purely additive writes.
+ */
+async function exportChatTranscriptToDailyPage(history) {
+  const blocks = buildChatTranscriptBlocks(history, { assistantName: getAssistantDisplayName() });
+  if (blocks.length === 0) return null;
+
+  const { pageUid, pageTitle } = await ensureDailyPageUid(new Date());
+  if (!pageUid) throw new Error("Could not resolve today's daily page UID.");
+
+  const now = new Date();
+  const timeLabel = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const headerUid = await createRoamBlock(pageUid, `[[Chief of Staff/Transcripts]] — ${timeLabel}`, "last");
+  for (const blockText of blocks) {
+    await createRoamBlock(headerUid, blockText, "last");
+  }
+  return { pageUid, pageTitle, headerUid, count: blocks.length };
 }
 
 /**
@@ -6246,6 +6268,7 @@ function onload({ extensionAPI }) {
     getCostHistorySummary,
     getActiveAgentAbortController: () => getActiveAgentAbortController(),
     writeResponseToTodayDailyPage,
+    exportChatTranscript: exportChatTranscriptToDailyPage,
     getRoamAlphaApi: () => window.roamAlphaAPI,
     openRoamPageByTitle,
     askChiefOfStaff,

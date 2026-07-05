@@ -85,3 +85,23 @@ export function extractMcpKeyReference(mcpResultTexts) {
   const capped = entries.slice(0, 50);
   return `[Key reference: ${capped.join("; ")}]`;
 }
+
+/**
+ * Build block strings for a chat transcript export (/export command).
+ * Takes the chat panel history (array of { role, text }) and returns an
+ * array of Roam block strings, one per message, prefixed with a bold
+ * speaker label. Entries with no visible text are skipped; unknown roles
+ * are treated as assistant (mirrors normaliseChatPanelMessage).
+ */
+export function buildChatTranscriptBlocks(history, { assistantName = "Chief of Staff" } = {}) {
+  if (!Array.isArray(history)) return [];
+  const safeName = String(assistantName || "Chief of Staff").trim() || "Chief of Staff";
+  const blocks = [];
+  for (const entry of history) {
+    const text = String(entry?.text || "").trim();
+    if (!text) continue;
+    const isUser = String(entry?.role || "").toLowerCase() === "user";
+    blocks.push(`**${isUser ? "User" : safeName}:** ${text}`);
+  }
+  return blocks;
+}

@@ -917,6 +917,31 @@ async function handleChatPanelSend() {
     return;
   }
 
+  if (/^\/export$/i.test(message)) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    if (typeof deps.exportChatTranscript !== "function") {
+      appendChatPanelMessage("assistant", "Export is not available.");
+      return;
+    }
+    if (chatPanelHistory.length === 0) {
+      appendChatPanelMessage("assistant", "Nothing to export — the chat is empty.");
+      return;
+    }
+    setChatPanelSendingState(true);
+    try {
+      const result = await deps.exportChatTranscript([...chatPanelHistory]);
+      appendChatPanelMessage("assistant", result
+        ? `Exported ${result.count} message${result.count === 1 ? "" : "s"} to today's daily page (${result.pageTitle}) under [[Chief of Staff/Transcripts]].`
+        : "Nothing to export — the chat is empty.");
+    } catch (error) {
+      appendChatPanelMessage("assistant", `Export failed: ${error?.message || "could not write to today's daily page."}`);
+    } finally {
+      setChatPanelSendingState(false);
+    }
+    return;
+  }
+
   removeEmptyStateHint();
   appendChatPanelMessage("user", message);
   appendChatPanelHistory("user", message);

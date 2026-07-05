@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   extractBalancedJsonObjects,
   extractMcpKeyReference,
+  buildChatTranscriptBlocks,
 } from "../src/parse-utils.js";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -148,4 +149,60 @@ test("extractMcpKeyReference skips null entries in the array", () => {
   const texts = [null, "**Valid** (Key: VLD)", undefined, ""];
   const result = extractMcpKeyReference(texts);
   assert.ok(result.includes("Valid → VLD"));
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// buildChatTranscriptBlocks
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("buildChatTranscriptBlocks maps user and assistant messages with labels", () => {
+  const history = [
+    { role: "user", text: "What did I work on last week?" },
+    { role: "assistant", text: "You worked on the roadmap." },
+  ];
+  const result = buildChatTranscriptBlocks(history, { assistantName: "Jeeves" });
+  assert.deepEqual(result, [
+    "**User:** What did I work on last week?",
+    "**Jeeves:** You worked on the roadmap.",
+  ]);
+});
+
+test("buildChatTranscriptBlocks defaults assistant name to Chief of Staff", () => {
+  const result = buildChatTranscriptBlocks([{ role: "assistant", text: "Hello" }]);
+  assert.deepEqual(result, ["**Chief of Staff:** Hello"]);
+});
+
+test("buildChatTranscriptBlocks skips entries with no visible text", () => {
+  const history = [
+    { role: "user", text: "  " },
+    { role: "user", text: "" },
+    { role: "user" },
+    null,
+    { role: "assistant", text: "Real message" },
+  ];
+  const result = buildChatTranscriptBlocks(history);
+  assert.equal(result.length, 1);
+  assert.equal(result[0], "**Chief of Staff:** Real message");
+});
+
+test("buildChatTranscriptBlocks treats unknown roles as assistant", () => {
+  const result = buildChatTranscriptBlocks([{ role: "system", text: "Note" }], { assistantName: "COS" });
+  assert.deepEqual(result, ["**COS:** Note"]);
+});
+
+test("buildChatTranscriptBlocks handles non-array and empty input", () => {
+  assert.deepEqual(buildChatTranscriptBlocks(null), []);
+  assert.deepEqual(buildChatTranscriptBlocks(undefined), []);
+  assert.deepEqual(buildChatTranscriptBlocks("not an array"), []);
+  assert.deepEqual(buildChatTranscriptBlocks([]), []);
+});
+
+test("buildChatTranscriptBlocks falls back on blank assistant name", () => {
+  const result = buildChatTranscriptBlocks([{ role: "assistant", text: "Hi" }], { assistantName: "   " });
+  assert.deepEqual(result, ["**Chief of Staff:** Hi"]);
+});
+
+test("buildChatTranscriptBlocks trims message text", () => {
+  const result = buildChatTranscriptBlocks([{ role: "user", text: "  padded  " }]);
+  assert.deepEqual(result, ["**User:** padded"]);
 });
