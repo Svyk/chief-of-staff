@@ -16,9 +16,10 @@ import {
 } from "../src/security-core.js";
 
 test("detectClaimedActionWithoutToolCall detects undo/redo and action claims", () => {
+  // roam_redo retired (#131) — claimed redos still flag, hinting roam_undo
   assert.deepEqual(
     detectClaimedActionWithoutToolCall("Action redone successfully.", []),
-    { detected: true, matchedToolHint: "roam_redo" }
+    { detected: true, matchedToolHint: "roam_undo" }
   );
   assert.equal(
     detectClaimedActionWithoutToolCall("Done: I updated the task", []).detected,

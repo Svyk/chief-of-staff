@@ -785,7 +785,11 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
       }
     }
     deps.debugLog(`[Local MCP] META dispatch: ${tool.name}`, innerArgs);
-    return tool.execute(innerArgs);
+    const localResult = await tool.execute(innerArgs);
+    // Undo ledger (#131): non-Roam mutations are recorded so /undo can name
+    // what it cannot reverse. Never fails the call (ledger is try/catch-wrapped).
+    if (isMutating && !localResult?.error) deps.ledgerRecordOther?.(`${tool.name} (${tool._serverName || "local MCP"})`);
+    return localResult;
   }
 
   // REMOTE_MCP_ROUTE discovery tool: returns a routed server's tool catalog
@@ -795,7 +799,9 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
 
   // REMOTE_MCP_EXECUTE meta-tool: dispatch to the discovered remote tool by name
   if (toolName === "REMOTE_MCP_EXECUTE") {
-    return deps.buildRemoteMcpMetaTool().execute(effectiveArgs || {});
+    const remoteResult = await deps.buildRemoteMcpMetaTool().execute(effectiveArgs || {});
+    if (isMutating && !remoteResult?.error) deps.ledgerRecordOther?.(`${effectiveArgs?.tool_name || "remote tool"} (remote MCP)`);
+    return remoteResult;
   }
 
   // EXT_ROUTE / EXT_EXECUTE: extension tool routing (two-stage, like LOCAL_MCP)
@@ -803,7 +809,9 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
     return deps.buildExtRouteTool().execute(effectiveArgs || {});
   }
   if (toolName === "EXT_EXECUTE" && deps.buildExtExecuteTool) {
-    return deps.buildExtExecuteTool().execute(effectiveArgs || {});
+    const extResult = await deps.buildExtExecuteTool().execute(effectiveArgs || {});
+    if (isMutating && !extResult?.error) deps.ledgerRecordOther?.(`${effectiveArgs?.tool_name || "extension tool"} (extension)`);
+    return extResult;
   }
 
   // ROAM_ROUTE / ROAM_EXECUTE: roam extended tool routing (two-stage)
@@ -811,7 +819,15 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
     return deps.buildRoamRouteTool().execute(effectiveArgs || {});
   }
   if (toolName === "ROAM_EXECUTE" && deps.buildRoamExecuteTool) {
-    return deps.buildRoamExecuteTool().execute(effectiveArgs || {});
+    // Undo ledger (#131): routed Roam write tools (roam_batch_write,
+    // roam_modify_todo, ...) dispatch through here — record under the INNER
+    // tool name so the extraction map sees the real tool.
+    const innerName = effectiveArgs?.tool_name;
+    const innerArgs = effectiveArgs?.arguments || {};
+    deps.ledgerCaptureBefore?.(innerName, innerArgs);
+    const roamExecResult = await deps.buildRoamExecuteTool().execute(effectiveArgs || {});
+    deps.ledgerRecord?.(innerName, innerArgs, roamExecResult);
+    return roamExecResult;
   }
 
   const roamTool = resolvedTool;
@@ -822,7 +838,13 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
     if (deps.getBtProjectsCache() && toolName.startsWith("roam_bt_") && !toolName.includes("search") && !toolName.includes("get_")) {
       deps.setBtProjectsCache(null);
     }
-    return roamTool.execute(args || {});
+    // Undo ledger (#131): capture before-images for update tools, record
+    // successful mutations. Mutating tools outside the ledger's extraction
+    // map (COS, direct MCP, extension tools) are recorded as non-reversible.
+    deps.ledgerCaptureBefore?.(toolName, args);
+    const toolResult = await roamTool.execute(args || {});
+    deps.ledgerRecord?.(toolName, args, toolResult, { isMutating });
+    return toolResult;
   }
 
   const mcpClientRef = deps.getMcpClient();
@@ -843,6 +865,8 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
           ? effectiveArgs.tools.map(t => t?.tool_slug).filter(Boolean)
           : [];
         slugs.forEach(slug => deps.recordToolResponseShape(slug, parsed));
+        // Undo ledger (#131): mutating Composio calls are named as non-reversible
+        if (isMutating) slugs.forEach(slug => deps.ledgerRecordOther?.(`${slug} (Composio)`));
       }
       return parsed;
     } catch (error) {

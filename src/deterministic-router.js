@@ -1683,34 +1683,32 @@ export async function tryRunDeterministicAskIntent(prompt, context = {}) {
 
   // ── Undo ──────────────────────────────────────────────────────────
   // "undo", "undo that", "oops", "revert", "revert that"
+  // COS-scoped (roadmap #131): presents the mutation-ledger summary for the
+  // agent's last batch instead of firing Roam's global data.undo() — which
+  // pops whatever is top of the SHARED stack, possibly the user's own edit.
+  // The chat panel attaches confirm buttons via result.undoPending; nothing
+  // is reversed without confirmation. (The old global redo fast-path retired
+  // with it — there is no matching redo for a ledger reversal.)
   if (/^(?:undo|oops!?|whoops!?|revert)\s*(?:that|the last|my last|it)?\s*(?:change|action|edit|operation)?[.!?]?\s*$/i.test(prompt)) {
-    deps.debugLog("[Chief flow] Deterministic route matched: undo");
-    const roamTools = deps.getRoamNativeTools() || [];
-    const undoTool = roamTools.find(t => t.name === "roam_undo");
-    if (undoTool && typeof undoTool.execute === "function") {
-      try {
-        await undoTool.execute({});
-        return deps.publishAskResponse(prompt, "Done — last action undone.", assistantName, suppressToasts);
-      } catch (e) {
-        return deps.publishAskResponse(prompt, `Undo failed: ${e?.message || "Unknown error"}`, assistantName, suppressToasts);
-      }
+    deps.debugLog("[Chief flow] Deterministic route matched: undo (ledger)");
+    const batch = deps.getUndoableBatch ? deps.getUndoableBatch() : null;
+    if (!batch) {
+      return deps.publishAskResponse(prompt, "I haven't made any changes I can reverse in this session. To undo your own edits, use Roam's native undo (Ctrl/Cmd+Z).", assistantName, suppressToasts);
     }
-  }
-
-  // ── Redo ──────────────────────────────────────────────────────────
-  // "redo", "redo that", "redo the last change"
-  if (/^redo\s*(?:that|the last|my last|it)?\s*(?:change|action|edit|operation)?[.!?]?\s*$/i.test(prompt)) {
-    deps.debugLog("[Chief flow] Deterministic route matched: redo");
-    const roamTools = deps.getRoamNativeTools() || [];
-    const redoTool = roamTools.find(t => t.name === "roam_redo");
-    if (redoTool && typeof redoTool.execute === "function") {
-      try {
-        await redoTool.execute({});
-        return deps.publishAskResponse(prompt, "Done — last action redone.", assistantName, suppressToasts);
-      } catch (e) {
-        return deps.publishAskResponse(prompt, `Redo failed: ${e?.message || "Unknown error"}`, assistantName, suppressToasts);
-      }
+    if (deps.batchHasReversibleEntries && !deps.batchHasReversibleEntries(batch)) {
+      const parts = [
+        ...(batch.declined || []).map((d) => d.summary),
+        ...(batch.others || []).map((o) => o.label),
+      ];
+      return deps.publishAskResponse(prompt, `My last changes (from **"${batch.prompt}"**) can't be auto-reversed: ${parts.join("; ")}. Please check them manually. Your own edits are covered by Roam's native undo (Ctrl/Cmd+Z).`, assistantName, suppressToasts);
     }
+    const summary = deps.buildUndoSummary(batch);
+    const result = deps.publishAskResponse(prompt, summary, assistantName, suppressToasts);
+    if (result && typeof result === "object") {
+      result.undoPending = true;
+      result.undoBatchId = batch.id;
+    }
+    return result;
   }
 
   // ── Current page query ──────────────────────────────────────────
@@ -2090,6 +2088,8 @@ export async function tryRunDeterministicAskIntent(prompt, context = {}) {
             return deps.publishAskResponse(prompt, "Cancelled — block was not added.", assistantName, suppressToasts);
           }
           const result = await createTool.execute(writeArgs);
+          // Undo ledger (#131): fast-path bypasses executeToolCall, so record here
+          deps.recordLedgerOutcome?.("roam_create_block", writeArgs, result);
           return deps.publishAskResponse(prompt, `Added to **[[${todayTitle}]]**: "${blockText}"`, assistantName, suppressToasts);
         } catch (e) {
           return deps.publishAskResponse(prompt, `Could not add to today's page: ${e?.message || "Unknown error"}`, assistantName, suppressToasts);

@@ -390,6 +390,7 @@ The floating chat panel (bottom-right corner by default) provides a persistent c
 - `/clear` (or `/new`) resets conversation history and context and starts a new chat (same as the Clear button).
 - `/plan <task>` drafts a plan before acting. The assistant explores your graph **read-only**, then lays out the numbered steps, the tools it will call, and the pages/blocks it will write — and waits. Approve with the **Run plan** button (or type `go`), edit by sending a revised request, or **Discard**. Nothing is written until you approve. Ideal for multi-step or consequential operations.
 - `/export` copies the current chat transcript into your graph — onto today's daily page under a `[[Chief of Staff/Transcripts]]` header block, so every export collects in that page's linked references. Add `/tag Name` (or `/tags`) to tag the export header, e.g. `/export /tag Inbox` tags it `#Inbox`; comma-separate for several (`/export /tag Inbox, Weekly Review`).
+- `/undo` reverses the changes **the assistant** made in its last run — blocks it created are deleted, blocks it edited are restored to their previous content — after showing you exactly what will be reversed (**Undo changes** / **Cancel**). Blocks you've edited since are detected and left alone, and anything it can't safely reverse (deletes, moves, emails sent via external services) is named rather than silently skipped. Your own edits are never touched — Roam's native undo (Ctrl/Cmd+Z) covers those. Saying "undo", "oops", or "revert that" in chat does the same thing. *(This replaces the previous behaviour, where "undo" fired Roam's global undo and could revert your own latest edit instead of the assistant's.)*
 - `/doctor` runs a health check across API keys, MCP servers, memory, skills, cron jobs, Composio, and Extension Tools — results displayed inline.
 - `/lesson` reviews the conversation and records lessons learned to `[[Chief of Staff/Lessons Learned]]`. Add a topic to focus the reflection (e.g. `/lesson error handling`).
 - Suffix a message with `/power` or `/ludicrous` to use a more capable model for that request. Use `/claude`, `/gemini`, `/openai`, `/mistral`, or `/groq` to force a specific provider.
@@ -479,8 +480,7 @@ Many common tasks are handled by a **deterministic router** that matches your in
 
 | You type | What happens |
 |---|---|
-| `undo` | Undoes the last Roam action |
-| `redo` | Redoes the last undone action |
+| `undo` / `oops` / `revert that` | Reverses the assistant's last changes (same as `/undo` — shows a summary and asks for confirmation; never touches your own edits) |
 | `what time is it` | Current time and today's daily page title |
 | `health check` or `doctor` | Self-diagnostic report (API keys, MCP, memory, skills, cron, Composio, Extension Tools) |
 | `help` | Context-aware capability summary |
@@ -816,7 +816,7 @@ All LLM processing happens via direct API calls from your browser to your config
 
 ### What the extension does not protect against
 
-**User-approved destructive actions.** The biggest realistic risk is approving something you shouldn't. The extension shows you what it intends to do before it does it, but if you confirm a deletion or an email send, it will execute. Review approval toasts carefully, especially for unfamiliar operations. Roam's built-in undo and daily backups provide a recovery path.
+**User-approved destructive actions.** The biggest realistic risk is approving something you shouldn't. The extension shows you what it intends to do before it does it, but if you confirm a deletion or an email send, it will execute. Review approval toasts carefully, especially for unfamiliar operations. `/undo` reverses the assistant's last batch of block creations and edits; Roam's built-in undo and daily backups cover the rest.
 
 **Determined adversarial content.** Pattern-based injection detection cannot catch every possible encoding of a malicious instruction. A sufficiently creative attacker who can get content into your graph (via a shared page, an imported file, or an email body) could theoretically craft a payload that evades all 28 injection patterns (15 general + 13 memory-specific) and the Unicode homoglyph layer while still influencing the LLM's behaviour. The boundary wrapping and approval gating provide additional layers, but no detection system is perfect.
 
