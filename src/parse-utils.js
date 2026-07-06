@@ -98,6 +98,28 @@ export function looksLikeRoamUid(str) {
 }
 
 /**
+ * Format a raw tag string (from `/export /tag ...`) into a Roam tag string.
+ * Comma-separates into multiple tags; each renders idiomatically as `#Tag`
+ * (no spaces) or `#[[Multi Word]]` (has spaces). Strips any leading `#` or
+ * `[[ ]]` the user typed, dedupes case-insensitively, and drops stray brackets
+ * that would break the `#[[...]]` form. Returns "" for empty/invalid input.
+ */
+export function buildRoamTagString(rawTags) {
+  if (!rawTags || typeof rawTags !== "string") return "";
+  const out = [];
+  const seen = new Set();
+  for (const part of rawTags.split(",")) {
+    const clean = part.replace(/[#\[\]]/g, "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(/\s/.test(clean) ? `#[[${clean}]]` : `#${clean}`);
+  }
+  return out.join(" ");
+}
+
+/**
  * Build block strings for a chat transcript export (/export command).
  * Takes the chat panel history (array of { role, text }) and returns an
  * array of Roam block strings, one per message, prefixed with a bold

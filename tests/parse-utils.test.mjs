@@ -5,6 +5,7 @@ import {
   extractMcpKeyReference,
   buildChatTranscriptBlocks,
   looksLikeRoamUid,
+  buildRoamTagString,
 } from "../src/parse-utils.js";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -232,4 +233,44 @@ test("looksLikeRoamUid rejects page titles", () => {
   assert.equal(looksLikeRoamUid("[[Page]]"), false);       // bracketed ref
   assert.equal(looksLikeRoamUid(""), false);
   assert.equal(looksLikeRoamUid(null), false);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// buildRoamTagString
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("buildRoamTagString renders a single-word tag as #Tag", () => {
+  assert.equal(buildRoamTagString("Inbox"), "#Inbox");
+});
+
+test("buildRoamTagString renders a multi-word tag with brackets", () => {
+  assert.equal(buildRoamTagString("Weekly Review"), "#[[Weekly Review]]");
+});
+
+test("buildRoamTagString comma-separates multiple tags", () => {
+  assert.equal(buildRoamTagString("Inbox, Review"), "#Inbox #Review");
+  assert.equal(buildRoamTagString("Inbox, Weekly Review"), "#Inbox #[[Weekly Review]]");
+});
+
+test("buildRoamTagString strips a leading # and [[ ]] the user typed", () => {
+  assert.equal(buildRoamTagString("#Inbox"), "#Inbox");
+  assert.equal(buildRoamTagString("[[Inbox]]"), "#Inbox");
+  assert.equal(buildRoamTagString("[[Weekly Review]]"), "#[[Weekly Review]]");
+});
+
+test("buildRoamTagString dedupes case-insensitively, keeping first form", () => {
+  assert.equal(buildRoamTagString("Inbox, inbox"), "#Inbox");
+  assert.equal(buildRoamTagString("A, B, A"), "#A #B");
+});
+
+test("buildRoamTagString returns empty for blank / invalid input", () => {
+  assert.equal(buildRoamTagString(""), "");
+  assert.equal(buildRoamTagString("   "), "");
+  assert.equal(buildRoamTagString(",, ,"), "");
+  assert.equal(buildRoamTagString(null), "");
+  assert.equal(buildRoamTagString(undefined), "");
+});
+
+test("buildRoamTagString drops stray brackets that would break the #[[ ]] form", () => {
+  assert.equal(buildRoamTagString("Foo]]bar"), "#Foobar");
 });

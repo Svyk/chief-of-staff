@@ -1,4 +1,4 @@
-import { extractBalancedJsonObjects, extractMcpKeyReference, buildChatTranscriptBlocks, looksLikeRoamUid } from "./parse-utils.js";
+import { extractBalancedJsonObjects, extractMcpKeyReference, buildChatTranscriptBlocks, looksLikeRoamUid, buildRoamTagString } from "./parse-utils.js";
 import { detectPlanFlag, stripPlanFlag, extractPlanStructure, setPendingPlan, getPendingPlan, clearPendingPlan } from "./plan-mode.js";
 import {
   initIntentClassifier, classifyIntent, evaluateConfidence,
@@ -2086,7 +2086,7 @@ async function writeResponseToTodayDailyPage(userPrompt, responseText) {
  * that page's linked references. One child block per message; block text is
  * capped by createRoamBlock's shared 20K truncation. Purely additive writes.
  */
-async function exportChatTranscriptToDailyPage(history) {
+async function exportChatTranscriptToDailyPage(history, { tags = "" } = {}) {
   const blocks = buildChatTranscriptBlocks(history, { assistantName: getAssistantDisplayName() });
   if (blocks.length === 0) return null;
 
@@ -2095,11 +2095,15 @@ async function exportChatTranscriptToDailyPage(history) {
 
   const now = new Date();
   const timeLabel = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const headerUid = await createRoamBlock(pageUid, `[[Chief of Staff/Transcripts]] — ${timeLabel}`, "last");
+  // Optional user tags (from `/export /tag ...`) go on the header/parent block so
+  // the whole export is discoverable from that tag's linked references.
+  const tagStr = buildRoamTagString(tags);
+  const headerText = `[[Chief of Staff/Transcripts]] — ${timeLabel}${tagStr ? ` ${tagStr}` : ""}`;
+  const headerUid = await createRoamBlock(pageUid, headerText, "last");
   for (const blockText of blocks) {
     await createRoamBlock(headerUid, blockText, "last");
   }
-  return { pageUid, pageTitle, headerUid, count: blocks.length };
+  return { pageUid, pageTitle, headerUid, count: blocks.length, tags: tagStr };
 }
 
 /**

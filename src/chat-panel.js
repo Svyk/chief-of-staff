@@ -965,7 +965,9 @@ async function handleChatPanelSend() {
     return;
   }
 
-  if (/^\/export$/i.test(message)) {
+  // /export, optionally with `/tag` (or `/tags`) <name>[, <name>...] to tag the export header.
+  const exportMatch = message.match(/^\/export(?:\s+\/tags?\b\s*(.*))?$/i);
+  if (exportMatch) {
     chatPanelInput.value = "";
     removeEmptyStateHint();
     if (typeof deps.exportChatTranscript !== "function") {
@@ -976,11 +978,13 @@ async function handleChatPanelSend() {
       appendChatPanelMessage("assistant", "Nothing to export — the chat is empty.");
       return;
     }
+    const tags = (exportMatch[1] || "").trim();
     setChatPanelSendingState(true);
     try {
-      const result = await deps.exportChatTranscript([...chatPanelHistory]);
+      const result = await deps.exportChatTranscript([...chatPanelHistory], { tags });
+      const tagNote = result?.tags ? ` (tagged ${result.tags})` : "";
       appendChatPanelMessage("assistant", result
-        ? `Exported ${result.count} message${result.count === 1 ? "" : "s"} to today's daily page (${result.pageTitle}) under [[Chief of Staff/Transcripts]].`
+        ? `Exported ${result.count} message${result.count === 1 ? "" : "s"} to today's daily page (${result.pageTitle}) under [[Chief of Staff/Transcripts]]${tagNote}.`
         : "Nothing to export — the chat is empty.");
     } catch (error) {
       appendChatPanelMessage("assistant", `Export failed: ${error?.message || "could not write to today's daily page."}`);
