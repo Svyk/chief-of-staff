@@ -87,6 +87,17 @@ export function extractMcpKeyReference(mcpResultTexts) {
 }
 
 /**
+ * True when a string looks like an intended Roam identifier rather than a page
+ * title: a 9-char block UID (letters/digits/_/-) or a DNP UID (MM-DD-YYYY).
+ * Used to decide whether a missing write-target should error (bad UID) or be
+ * treated as a page title to create.
+ */
+export function looksLikeRoamUid(str) {
+  const s = String(str || "").trim();
+  return /^[A-Za-z0-9_-]{9}$/.test(s) || /^\d{2}-\d{2}-\d{4}$/.test(s);
+}
+
+/**
  * Build block strings for a chat transcript export (/export command).
  * Takes the chat panel history (array of { role, text }) and returns an
  * array of Roam block strings, one per message, prefixed with a bold

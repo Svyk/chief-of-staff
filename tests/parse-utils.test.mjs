@@ -4,6 +4,7 @@ import {
   extractBalancedJsonObjects,
   extractMcpKeyReference,
   buildChatTranscriptBlocks,
+  looksLikeRoamUid,
 } from "../src/parse-utils.js";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -205,4 +206,30 @@ test("buildChatTranscriptBlocks falls back on blank assistant name", () => {
 test("buildChatTranscriptBlocks trims message text", () => {
   const result = buildChatTranscriptBlocks([{ role: "user", text: "  padded  " }]);
   assert.deepEqual(result, ["**User:** padded"]);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// looksLikeRoamUid
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("looksLikeRoamUid recognises 9-char block UIDs", () => {
+  assert.equal(looksLikeRoamUid("aHirk9S7g"), true);
+  assert.equal(looksLikeRoamUid("CLVXEsLYw"), true);
+  assert.equal(looksLikeRoamUid("_fM7pkQEa"), true);
+  assert.equal(looksLikeRoamUid("abc-de_12"), true);
+});
+
+test("looksLikeRoamUid recognises DNP UIDs", () => {
+  assert.equal(looksLikeRoamUid("07-06-2026"), true);
+  assert.equal(looksLikeRoamUid("12-31-2025"), true);
+});
+
+test("looksLikeRoamUid rejects page titles", () => {
+  assert.equal(looksLikeRoamUid("bbq shelter"), false);   // has a space
+  assert.equal(looksLikeRoamUid("BBQ Shelter"), false);
+  assert.equal(looksLikeRoamUid("Project"), false);        // too short
+  assert.equal(looksLikeRoamUid("bbqShelter1"), false);    // 11 chars
+  assert.equal(looksLikeRoamUid("[[Page]]"), false);       // bracketed ref
+  assert.equal(looksLikeRoamUid(""), false);
+  assert.equal(looksLikeRoamUid(null), false);
 });

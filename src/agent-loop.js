@@ -49,6 +49,7 @@ import {
 } from "./usage-tracking.js";
 
 import { buildDefaultSystemPrompt } from "./system-prompt.js";
+import { buildPlanModeAddendum, buildExecutionAddendum } from "./plan-mode.js";
 import { getLocalMcpToolsCache, getLocalMcpTools } from "./local-mcp.js";
 import { getRemoteMcpToolsCache, getRemoteMcpTools } from "./remote-mcp.js";
 import { getToolkitSchemaRegistry } from "./composio-mcp.js";
@@ -211,6 +212,8 @@ export async function runAgentLoop(userMessage, options = {}) {
     tier = null,
     gatheringGuard: initialGatheringGuard = null,
     readOnlyTools = false,
+    planMode = false,
+    approvedPlan = null,
     skipApproval = false,
     carryoverWriteReplayGuard = null,
     toolWhitelist = null,
@@ -239,7 +242,8 @@ export async function runAgentLoop(userMessage, options = {}) {
 
   const allTools = await deps.getAvailableToolSchemas(userMessage);
   let tools;
-  if (readOnlyTools) {
+  if (readOnlyTools && !planMode) {
+    // Inbox read-only: hide mutating tools entirely — the model must only read.
     tools = allTools.filter(t => deps.INBOX_READ_ONLY_TOOL_ALLOWLIST.has(t.name) || t.isMutating === false);
   } else if (toolWhitelist) {
     // Per-skill tool whitelist: only include whitelisted tools + always-available core tools
@@ -250,10 +254,21 @@ export async function runAgentLoop(userMessage, options = {}) {
     tools = filterToolsByRelevance(allTools, userMessage);
   }
 
-  const readOnlyAddendum = readOnlyTools
-    ? `\n\nIMPORTANT: You are running in read-only mode (triggered by an inbox item). You can search, read, and gather information, but you CANNOT create, update, move, or delete any blocks, send emails, or perform any mutating actions. Summarise your findings clearly. The human will review and act on your summary. Do not cite or reference individual block UIDs in your response — omit any "(uid: ...)" or "Source block:" references entirely.`
-    : "";
-  const system = (systemPrompt || await buildDefaultSystemPrompt(userMessage, { provider, tier: effectiveTier })) + readOnlyAddendum;
+  // Read-only addendum. Plan mode (`/plan`) and inbox mode both run read-only
+  // but need different wording: plan mode must produce a plan (future tense so it
+  // doesn't trip the claimed-action guards), not summarise findings like inbox.
+  let readOnlyAddendum = "";
+  if (planMode) {
+    readOnlyAddendum = buildPlanModeAddendum();
+  } else if (readOnlyTools) {
+    readOnlyAddendum = `\n\nIMPORTANT: You are running in read-only mode (triggered by an inbox item). You can search, read, and gather information, but you CANNOT create, update, move, or delete any blocks, send emails, or perform any mutating actions. Summarise your findings clearly. The human will review and act on your summary. Do not cite or reference individual block UIDs in your response — omit any "(uid: ...)" or "Source block:" references entirely.`;
+  }
+
+  // Execution addendum: when a plan the user approved is supplied, the model
+  // executes it step-by-step with normal (mutating) tools and standard gating.
+  const executionAddendum = buildExecutionAddendum(approvedPlan);
+
+  const system = (systemPrompt || await buildDefaultSystemPrompt(userMessage, { provider, tier: effectiveTier })) + readOnlyAddendum + executionAddendum;
 
   // Build messages array: use carried-over messages (failover) or build fresh
   let messages;
@@ -292,6 +307,10 @@ export async function runAgentLoop(userMessage, options = {}) {
   // If the model called the right tool but it failed (e.g. rate limit, network error),
   // the live data guard should let the model report that error rather than blocking.
   let sawExternalDataToolAttempt = false;
+  // A successful mutation is legitimate grounding for the final response: when the
+  // user asked for an action ("create a page") and the model performed it, the
+  // "Done — created X" summary must not be blocked by the live-data-read guard.
+  let sawSuccessfulWriteToolCall = false;
   let liveDataGuardFired = false;
   let toolErrorNudgeFired = false;
   let deferralNudgeFired = false;
@@ -745,7 +764,7 @@ export async function runAgentLoop(userMessage, options = {}) {
           continue;
         }
 
-        if (requiresLiveDataTool && !sawSuccessfulExternalDataToolResult) {
+        if (requiresLiveDataTool && !sawSuccessfulExternalDataToolResult && !sawSuccessfulWriteToolCall) {
           // If the model called the right tool but it errored (e.g. rate limit, network
           // failure), let it report the error to the user rather than blocking the response.
           if (sawExternalDataToolAttempt && !toolErrorNudgeFired) {
@@ -1135,6 +1154,12 @@ export async function runAgentLoop(userMessage, options = {}) {
         if (isExternalToolCall && toolCall.name !== "LOCAL_MCP_ROUTE" && toolCall.name !== "REMOTE_MCP_ROUTE" && isSuccessfulExternalToolResult(result)) {
           sawSuccessfulExternalDataToolResult = true;
         }
+        // A successful write tool call grounds the response in a real action.
+        // Covers both direct write tools and routed writes via ROAM_EXECUTE.
+        if (!errorMessage && (deps.WRITE_TOOL_NAMES?.has(toolCall.name) ||
+            (toolCall.name === "ROAM_EXECUTE" && deps.WRITE_TOOL_NAMES?.has(toolCall.arguments?.tool_name)))) {
+          sawSuccessfulWriteToolCall = true;
+        }
         if (onToolResult) onToolResult(toolCall.name, result);
         // Track meta-routed MCP tool usage for fabrication guard and follow-up auto-escalation
         if (toolCall.name === "LOCAL_MCP_ROUTE" || toolCall.name === "LOCAL_MCP_EXECUTE") {
@@ -1162,7 +1187,11 @@ export async function runAgentLoop(userMessage, options = {}) {
       }
       const lastToolResult = toolResults[toolResults.length - 1];
       const isWriteCall_last = deps.WRITE_TOOL_NAMES.has(lastToolResult?.toolCall?.name) || (lastToolResult?.toolCall?.name === "ROAM_EXECUTE" && deps.WRITE_TOOL_NAMES.has(lastToolResult?.toolCall?.arguments?.tool_name));
-      if (toolResults.length === 1 && isWriteCall_last && !lastToolResult?.result?.error) {
+      // Post-write short-circuit: a single successful write ends the run with a
+      // terse confirmation, skipping the summarising LLM call. Suppress it when
+      // executing an approved multi-step plan — the plan may have further steps
+      // and terminating after the first write would leave it half-done.
+      if (toolResults.length === 1 && isWriteCall_last && !lastToolResult?.result?.error && !approvedPlan) {
         const toolName = lastToolResult.toolCall.name;
         const resultData = lastToolResult.result;
         let finalText;

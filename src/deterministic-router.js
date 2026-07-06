@@ -1369,6 +1369,7 @@ export async function buildHelpSummary() {
   lines.push("- `/clear` (or `/new`) — Clear chat history and start a new chat");
   lines.push("- `/compact` — Compress older turns into a summary to free up context");
   lines.push("- `/export` — Copy the chat transcript to today's daily page under [[Chief of Staff/Transcripts]]");
+  lines.push("- `/plan` — Draft a read-only plan first, then execute after your approval");
   lines.push("- `/doctor` — Run a health check on API keys, MCP servers, memory, skills, and more");
   lines.push("- `/lesson` — Record lessons learned from this conversation");
   lines.push("- `/power` — Use a more capable model for this message");
