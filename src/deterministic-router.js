@@ -18,6 +18,7 @@ import { getLatestWorkflowSuggestionsFromConversation, promptLooksLikeWorkflowDr
 import { showInfoToastIfAllowed, promptWriteToDailyPage, promptToolExecutionApproval, appendChatPanelMessage } from "./chat-panel.js";
 import { loadCronJobs, isValidCronExpression } from "./cron-scheduler.js";
 import { buildDefaultSystemPrompt } from "./system-prompt.js";
+import { CHAT_COMMANDS } from "./chat-commands.js";
 import { wrapUntrustedWithInjectionScan } from "./security.js";
 import { persistAuditLogEntry, recordUsageStat } from "./usage-tracking.js";
 
@@ -1363,18 +1364,13 @@ export async function buildHelpSummary() {
     }
   } catch { /* ignore */ }
 
-  // ── Commands ──
+  // ── Commands ── (registry shared with the chat panel's `/` autocomplete
+  // menu so the two discovery surfaces can't drift — see chat-commands.js)
   lines.push("**Chat commands:**");
-  lines.push("- `/help` — This summary");
-  lines.push("- `/clear` (or `/new`) — Clear chat history and start a new chat");
-  lines.push("- `/compact` — Compress older turns into a summary to free up context");
-  lines.push("- `/export` — Copy the chat transcript to today's daily page under [[Chief of Staff/Transcripts]] (add `/tag Name` to tag it, e.g. `/export /tag Inbox`)");
-  lines.push("- `/plan` — Draft a read-only plan first, then execute after your approval");
-  lines.push("- `/doctor` — Run a health check on API keys, MCP servers, memory, skills, and more");
-  lines.push("- `/lesson` — Record lessons learned from this conversation");
-  lines.push("- `/power` — Use a more capable model for this message");
-  lines.push("- `/ludicrous` — Use the most capable model");
-  lines.push("- `/claude`, `/gemini`, `/openai`, `/mistral`, `/groq` — Force a specific provider for this message");
+  for (const cmd of CHAT_COMMANDS) {
+    const alias = (cmd.aliases && cmd.aliases.length) ? ` (or \`${cmd.aliases.join("`, `")}\`)` : "";
+    lines.push(`- \`${cmd.name}\`${alias} — ${cmd.summary}`);
+  }
   lines.push("");
   lines.push("**Tips:** Ask me to search your graph, manage tasks, send emails, create pages, run your daily briefing, or anything else. I'll use the right tools automatically.");
 
