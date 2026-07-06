@@ -464,10 +464,11 @@ export function detectSystemPromptLeakage(text) {
 export function detectClaimedActionWithoutToolCall(text, registeredTools) {
   if (!text || typeof text !== "string") return { detected: false, matchedToolHint: "" };
 
+  // roam_redo retired with the COS-scoped undo ledger (#131) — a claimed
+  // redo still gets flagged, but the hint names the only tool that exists.
   const undoRedoClaimPattern = /\b(undone|redone|undo.{0,20}(done|complete|success|perform)|redo.{0,20}(done|complete|success|perform))\b/i;
   if (undoRedoClaimPattern.test(text)) {
-    const isRedo = /\bredo|redone\b/i.test(text);
-    return { detected: true, matchedToolHint: isRedo ? "roam_redo" : "roam_undo" };
+    return { detected: true, matchedToolHint: "roam_undo" };
   }
 
   const actionClaimPattern = /\b(Done\s*[—–\-,;:!.]|I've\s+(added|removed|changed|created|updated|deleted|set|applied|configured|enabled|disabled|turned|executed|moved|copied|sent|posted|modified|installed|fixed|written|toggled|checked|scanned|fetched|retrieved|looked\s+up|searched|read|opened|closed|activated|deactivated|saved|appended|stored|recorded|remembered|logged)|has been\s+(added|removed|changed|created|updated|deleted|applied|configured|enabled|disabled|written|toggled|activated|deactivated|saved|appended|stored|recorded|logged))/i;

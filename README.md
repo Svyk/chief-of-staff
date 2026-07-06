@@ -24,6 +24,7 @@ https://www.loom.com/share/9aa3c07de0f147af971d2fc54fe65e4a
 - **Three model tiers with automatic routing** — most requests use a fast, cheap model. Append `/power` or `/ludicrous` to your message to force a more capable tier, or let the extension auto-escalate based on request complexity. You can also force a specific provider with `/claude`, `/gemini`, `/openai`, `/mistral`, or `/groq`. See [How tiers work](#how-tiers-work) for details.
 - **Anthropic advisor tool (beta, opt-in)** — when running on Anthropic, the cheap executor (Haiku/Sonnet) can consult Opus on hard judgment calls within a single API call without giving up control of the agent loop. The advisor returns guidance only; it never executes tools. Off by default; enable in Advanced settings. See [Anthropic advisor tool](#anthropic-advisor-tool) for details.
 - **Plan-first execution** — prefix any request with `/plan` to get a preview instead of an action. The assistant explores your graph read-only and lays out the exact steps, tools, and writes it intends, then waits for your one-click approval (Run plan / Discard) before making any changes. See [Chat panel](#chat-panel).
+- **Undo the assistant's last changes** — `/undo` (or just saying "undo" / "oops") reverses everything the assistant wrote in its last run: created blocks are deleted, edited blocks restored to their previous content. It shows you exactly what will be reversed before doing anything, skips blocks you've edited since, and never touches your own edits — Roam's native Ctrl/Cmd+Z covers those. See [Chat panel](#chat-panel).
 - **Dry-run mode** — simulate any mutating operation before it executes. Useful for reviewing what the agent would do before committing.
 - **Linked refs filtering** — automatically removes Chief of Staff namespace pages from the linked references section of every non-COS page you visit, keeping your graph tidy. Filters are merged with your existing manual filters (never overwritten) and applied once per page per session, so manual changes are respected. Enabled by default; toggle off in Advanced settings if needed.
 - **Correction capture** — opt-in background feature that detects when you edit COS outputs (briefings, pinned responses) and records the differences on `[[Chief of Staff/Corrections]]`. Corrections are cross-referenced with the Review Queue for feedback loop closure. Runs during idle time only — enable in Settings → Show Automatic Actions.
@@ -362,6 +363,7 @@ Use this only as a recovery hatch — there's no undo, and you will need to re-e
 | **Chief of Staff: Install Composio Tool** | Prompts for a tool slug and starts the installation + authentication flow. |
 | **Chief of Staff: Deregister Composio Tool** | Removes a connected tool from Composio and from local state. |
 | **Chief of Staff: Test Composio Tool Connection** | Checks whether a specific tool is currently reachable via Composio. |
+| **Chief of Staff: Validate Composio Proxy** | Checks that your configured CORS proxy URL is reachable and responding correctly. |
 | **Chief of Staff: Refresh Tool Auth Status** | Re-checks any tools waiting for OAuth completion. |
 | **Chief of Staff: Discover Toolkit Schemas** | Discovers and caches schemas for all connected Composio toolkits. |
 | **Chief of Staff: Show Schema Registry** | Logs the discovered toolkit schema registry to the browser console. |
@@ -371,10 +373,15 @@ Use this only as a recovery hatch — there's no undo, and you will need to re-e
 | **Chief of Staff: Refresh Remote MCP Servers** | Disconnects and reconnects all configured remote MCP servers. |
 | **Chief of Staff: Connect Remote OAuth Server** | Starts the OAuth sign-in flow for a remote MCP server configured with auth type "oauth". |
 | **Chief of Staff: Disconnect Remote OAuth Server** | Clears stored OAuth credentials and disconnects a remote server. |
+| **Chief of Staff: Review MCP Schema Changes** | Shows the schema diff for any MCP server suspended after an unexpected tool schema change, and lets you accept or keep it blocked. |
+| **Chief of Staff: Refresh Extension Tools** | Re-discovers tools registered by other extensions on `window.RoamExtensionTools`. |
 | **Chief of Staff: Show Stored Tool Config** | Logs the current tool configuration to the browser console. |
 | **Chief of Staff: Show Last Run Trace** | Logs the most recent agent run (iterations, tool calls, timing) to the browser console. |
 | **Chief of Staff: Debug Runtime Stats** | Logs current runtime state (cache sizes, connection status, conversation turns) to the browser console. |
 | **Chief of Staff: Reset Token Usage Stats** | Resets the session token usage counters and cost display. |
+| **Chief of Staff: Show Cost History** | Toast summary of API spend: today, last 7 days, and last 30 days, with request and token counts. |
+| **Chief of Staff: Open Review Queue** | Opens `Chief of Staff/Review Queue` — where low-scoring agent runs are filed by the post-run evaluation feature. |
+| **Chief of Staff: Refresh AIBOM Snapshot** | Regenerates the runtime AI Bill of Materials snapshot (see [AIBOM](#ai-bill-of-materials-aibom)). |
 | **Chief of Staff: Reset All Settings (Recovery)** | Recovery hatch: clears every persisted setting (API keys, custom LLM endpoints, MCP servers, onboarding state, cron jobs, usage history) after a confirmation dialog. Use when a bad config is blocking the UI and uninstall/reinstall doesn't help. Requires a Roam reload to fully take effect. See [Recovery — starting over](#recovery--starting-over). |
 | **Chief of Staff: Show Scheduled Jobs** | Logs all scheduled cron jobs and their status to the browser console. |
 
@@ -390,6 +397,9 @@ The floating chat panel (bottom-right corner by default) provides a persistent c
 - `/clear` (or `/new`) resets conversation history and context and starts a new chat (same as the Clear button).
 - `/plan <task>` drafts a plan before acting. The assistant explores your graph **read-only**, then lays out the numbered steps, the tools it will call, and the pages/blocks it will write — and waits. Approve with the **Run plan** button (or type `go`), edit by sending a revised request, or **Discard**. Nothing is written until you approve. Ideal for multi-step or consequential operations.
 - `/export` copies the current chat transcript into your graph — onto today's daily page under a `[[Chief of Staff/Transcripts]]` header block, so every export collects in that page's linked references. Add `/tag Name` (or `/tags`) to tag the export header, e.g. `/export /tag Inbox` tags it `#Inbox`; comma-separate for several (`/export /tag Inbox, Weekly Review`).
+- `/undo` reverses the changes **the assistant** made in its last run — blocks it created are deleted, blocks it edited are restored to their previous content — after showing you exactly what will be reversed (**Undo changes** / **Cancel**). Blocks you've edited since are detected and left alone, and anything it can't safely reverse (deletes, moves, emails sent via external services) is named rather than silently skipped. Your own edits are never touched — Roam's native undo (Ctrl/Cmd+Z) covers those. Saying "undo", "oops", or "revert that" in chat does the same thing. *(This replaces the previous behaviour, where "undo" fired Roam's global undo and could revert your own latest edit instead of the assistant's.)*
+- `/compact` summarises older conversation turns into a compact summary, freeing context space while keeping recent turns intact. Useful in long-running chats when responses start losing earlier context.
+- `/help` shows a context-aware capability summary, including the full command list.
 - `/doctor` runs a health check across API keys, MCP servers, memory, skills, cron jobs, Composio, and Extension Tools — results displayed inline.
 - `/lesson` reviews the conversation and records lessons learned to `[[Chief of Staff/Lessons Learned]]`. Add a topic to focus the reflection (e.g. `/lesson error handling`).
 - Suffix a message with `/power` or `/ludicrous` to use a more capable model for that request. Use `/claude`, `/gemini`, `/openai`, `/mistral`, or `/groq` to force a specific provider.
@@ -479,8 +489,7 @@ Many common tasks are handled by a **deterministic router** that matches your in
 
 | You type | What happens |
 |---|---|
-| `undo` | Undoes the last Roam action |
-| `redo` | Redoes the last undone action |
+| `undo` / `oops` / `revert that` | Reverses the assistant's last changes (same as `/undo` — shows a summary and asks for confirmation; never touches your own edits) |
 | `what time is it` | Current time and today's daily page title |
 | `health check` or `doctor` | Self-diagnostic report (API keys, MCP, memory, skills, cron, Composio, Extension Tools) |
 | `help` | Context-aware capability summary |
@@ -816,7 +825,7 @@ All LLM processing happens via direct API calls from your browser to your config
 
 ### What the extension does not protect against
 
-**User-approved destructive actions.** The biggest realistic risk is approving something you shouldn't. The extension shows you what it intends to do before it does it, but if you confirm a deletion or an email send, it will execute. Review approval toasts carefully, especially for unfamiliar operations. Roam's built-in undo and daily backups provide a recovery path.
+**User-approved destructive actions.** The biggest realistic risk is approving something you shouldn't. The extension shows you what it intends to do before it does it, but if you confirm a deletion or an email send, it will execute. Review approval toasts carefully, especially for unfamiliar operations. `/undo` reverses the assistant's last batch of block creations and edits; Roam's built-in undo and daily backups cover the rest.
 
 **Determined adversarial content.** Pattern-based injection detection cannot catch every possible encoding of a malicious instruction. A sufficiently creative attacker who can get content into your graph (via a shared page, an imported file, or an email body) could theoretically craft a payload that evades all 28 injection patterns (15 general + 13 memory-specific) and the Unicode homoglyph layer while still influencing the LLM's behaviour. The boundary wrapping and approval gating provide additional layers, but no detection system is perfect.
 

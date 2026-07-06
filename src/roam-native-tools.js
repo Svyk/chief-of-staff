@@ -24,7 +24,7 @@ const ROAM_TOOL_CATEGORIES = {
   "Navigation": ["roam_open_depot", "roam_open_graph_overview", "roam_open_all_pages", "roam_open_settings", "roam_open_graph_view", "roam_open_help"],
   "Content & Formatting": ["roam_add_blockquote", "roam_remove_blockquote", "roam_add_callout", "roam_remove_callout", "roam_mermaid_embed", "roam_excalidraw_embed", "roam_upload_file"],
   "Page Management": ["roam_add_page_shortcut", "roam_remove_page_shortcut", "roam_share_link"],
-  "History": ["roam_undo", "roam_redo"]
+  "History": ["roam_undo"]
 };
 
 export function initRoamNativeTools(injected) {
@@ -1281,35 +1281,24 @@ export function getRoamNativeTools() {
       }
     },
     {
+      // COS-scoped undo (roadmap #131): reverses the mutation-ledger batch
+      // from Chief of Staff's last run. Replaces the old raw data.undo(),
+      // which popped whatever was top of Roam's SHARED undo stack — possibly
+      // the user's own latest edit. (roam_redo retired with it: there is no
+      // matching redo for a ledger reversal; Roam's native Ctrl/Cmd+Z covers
+      // the user's own edits.)
       name: "roam_undo",
       isMutating: true,
-      description: "Undo the last action in Roam. Use when the user asks to undo a recent change.",
+      description: "Reverse the changes Chief of Staff made in its last run: blocks it created are deleted, blocks it edited are restored to their previous content. Does NOT touch the user's own edits — those use Roam's native undo (Ctrl/Cmd+Z). Use when the user asks to undo or revert what you just did.",
       input_schema: { type: "object", properties: {} },
       execute: async () => {
-        const api = deps.getRoamAlphaApi();
-        if (!api?.data?.undo) {
-          throw new Error("Roam undo API unavailable");
+        const batch = deps.getUndoableBatch ? deps.getUndoableBatch() : null;
+        if (!batch) {
+          return { success: false, error: "Nothing to reverse — Chief of Staff has not made any reversible changes in this session. The user's own edits are covered by Roam's native undo (Ctrl/Cmd+Z)." };
         }
-        const result = await api.data.undo();
-        deps.debugLog("[Chief flow] roam_undo: data.undo() returned:", result);
-        await new Promise(r => setTimeout(r, 150));
-        return { success: true, action: "undo" };
-      }
-    },
-    {
-      name: "roam_redo",
-      isMutating: true,
-      description: "Redo the last undone action in Roam. Use when the user asks to redo something they just undid.",
-      input_schema: { type: "object", properties: {} },
-      execute: async () => {
-        const api = deps.getRoamAlphaApi();
-        if (!api?.data?.redo) {
-          throw new Error("Roam redo API unavailable");
-        }
-        const result = await api.data.redo();
-        deps.debugLog("[Chief flow] roam_redo: data.redo() returned:", result);
-        await new Promise(r => setTimeout(r, 150));
-        return { success: true, action: "redo" };
+        const report = await deps.executeLedgerUndo();
+        deps.debugLog("[Chief flow] roam_undo: ledger reversal report:", report);
+        return { success: true, action: "undo", summary: deps.buildUndoReport(report), ...report };
       }
     },
     {

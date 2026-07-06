@@ -1,6 +1,14 @@
 import { extractBalancedJsonObjects, extractMcpKeyReference, buildChatTranscriptBlocks, looksLikeRoamUid, buildRoamTagString } from "./parse-utils.js";
 import { detectPlanFlag, stripPlanFlag, extractPlanStructure, setPendingPlan, getPendingPlan, clearPendingPlan } from "./plan-mode.js";
 import {
+  initMutationLedger, setLedgerRunContext, getUndoableBatch, batchHasReversibleEntries,
+  buildUndoSummary, buildUndoReport, clearLedger,
+  captureBeforeImage as ledgerCaptureBefore,
+  recordToolOutcome as ledgerRecordOutcome,
+  recordOtherAction as ledgerRecordOther,
+  executeUndo as executeLedgerUndo,
+} from "./mutation-ledger.js";
+import {
   initIntentClassifier, classifyIntent, evaluateConfidence,
   clearIntentCache, getCachedClassification
 } from "./intent-classifier.js";
@@ -4596,7 +4604,7 @@ function publishAskResponse(prompt, responseText, assistantName, suppressToasts 
 // ── tryRunDeterministicAskIntent — extracted to deterministic-router.js ──
 
 async function askChiefOfStaff(userMessage, options = {}) {
-  const { offerWriteToDailyPage = false, suppressToasts = false, onTextChunk = null, onToolCall = null, readOnlyTools = false, approvedPlan = null } = options;
+  const { offerWriteToDailyPage = false, suppressToasts = false, onTextChunk = null, onToolCall = null, readOnlyTools = false, approvedPlan = null, trackUndo = false } = options;
   const rawPrompt = String(userMessage || "").trim();
   if (!rawPrompt) return;
 
@@ -4698,6 +4706,12 @@ async function askChiefOfStaff(userMessage, options = {}) {
   // (matches the documented design in security/ai-agent-security-reference-compliance.md A4).
   // Reset per-prompt MCP flag so prior MCP usage doesn't force escalation on unrelated prompts.
   setSessionUsedLocalMcp(false);
+
+  // Undo ledger (#131): mark a user-initiated run so mutations get recorded
+  // for /undo. Lazy — a read-only run (including /undo itself and the NL
+  // "undo" fast-path below) records nothing, so it never clobbers the
+  // undoable batch. Cron/inbox/background runs don't pass trackUndo.
+  if (trackUndo) setLedgerRunContext(prompt);
 
   debugLog("[Chief flow] askChiefOfStaff start:", {
     promptPreview: prompt.slice(0, 160),
@@ -5036,7 +5050,7 @@ async function promptAskChiefOfStaff() {
   });
   if (!userMessage) return;
   try {
-    await askChiefOfStaff(userMessage, { offerWriteToDailyPage: true });
+    await askChiefOfStaff(userMessage, { offerWriteToDailyPage: true, trackUndo: true });
   } catch (error) {
     showErrorToast("Ask failed", getUserFacingLlmErrorMessage(error, "Ask"));
     console.error("[Chief of Staff] Ask error:", redactForLog(String(error)));
@@ -6346,6 +6360,12 @@ function onload({ extensionAPI }) {
     exportChatTranscript: exportChatTranscriptToDailyPage,
     getPendingPlan,
     clearPendingPlan,
+    // Undo ledger (#131)
+    getUndoableBatch,
+    batchHasReversibleEntries,
+    buildUndoSummary,
+    buildUndoReport,
+    executeUndo: executeLedgerUndo,
     getRoamAlphaApi: () => window.roamAlphaAPI,
     openRoamPageByTitle,
     askChiefOfStaff,
@@ -6420,7 +6440,11 @@ function onload({ extensionAPI }) {
     SKILLS_PAGE_TITLE,
     getCloudflareApiToken: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.cloudflareApiToken, ""),
     getCloudflareAccountId: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.cloudflareAccountId, ""),
-    getCorsProxyUrl: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.composioMcpUrl, "")
+    getCorsProxyUrl: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.composioMcpUrl, ""),
+    // Undo ledger (#131) — roam_undo reverses the last COS mutation batch
+    getUndoableBatch,
+    executeLedgerUndo,
+    buildUndoReport
   });
   initComposioMcp({
     debugLog,
@@ -6559,6 +6583,11 @@ function onload({ extensionAPI }) {
     getSuspendedServers,
     unsuspendMcpServer,
   });
+  initMutationLedger({
+    getRoamAlphaApi,
+    debugLog,
+    withRoamWriteRetry,
+  });
   initToolExecution({
     debugLog,
     getExtensionAPI: () => extensionAPIRef,
@@ -6616,6 +6645,10 @@ function onload({ extensionAPI }) {
     getRemoteServerKeyForTool,
     recordUsageStat,
     recordToolUsage,
+    // Undo ledger (#131) — optional hooks, ?.-called; a ledger failure never fails a tool call
+    ledgerCaptureBefore,
+    ledgerRecord: ledgerRecordOutcome,
+    ledgerRecordOther,
   });
   initSystemPrompt({
     getAllMemoryContent,
@@ -6686,6 +6719,11 @@ function onload({ extensionAPI }) {
     getOrphanPagesResult,
     getStaleLinkResult,
     getStaleCronJobs,
+    // Undo ledger (#131): NL "undo"/"oops" fast-path + add_to_today recording
+    getUndoableBatch,
+    batchHasReversibleEntries,
+    buildUndoSummary,
+    recordLedgerOutcome: ledgerRecordOutcome,
   });
   initAgentLoop({
     debugLog,
@@ -6980,6 +7018,7 @@ function onunload() {
   flushUsageTracking(api);
   detachAllToastKeyboards();
   clearToolApprovals();
+  clearLedger();
   destroyChatPanel();
   clearConversationContext();
   clearStartupAuthPollTimers();

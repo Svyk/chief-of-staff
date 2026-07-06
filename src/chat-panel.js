@@ -733,6 +733,78 @@ function addPlanActionButtons(messageEl, planId) {
   footer.appendChild(discardBtn);
 }
 
+/**
+ * Attach [Undo changes] / [Cancel] buttons to an undo-summary message
+ * (roadmap #131). `batchId` pins the buttons to a specific ledger batch; if a
+ * newer run has since recorded mutations, the buttons degrade to a notice
+ * instead of reversing the wrong batch. Cancel keeps the batch (the user can
+ * still /undo later) — it only dismisses this confirmation.
+ */
+function addUndoActionButtons(messageEl, batchId) {
+  if (!messageEl) return;
+  const footer = getOrCreateMessageFooter(messageEl);
+
+  const disableBoth = () => { undoBtn.disabled = true; cancelBtn.disabled = true; };
+
+  const undoBtn = document.createElement("button");
+  undoBtn.className = "chief-plan-run-btn";
+  undoBtn.textContent = "Undo changes";
+  undoBtn.addEventListener("click", async () => {
+    if (undoBtn.disabled || chatPanelIsSending) return;
+    const current = deps.getUndoableBatch?.();
+    if (!current || current.id !== batchId) {
+      disableBoth();
+      appendChatPanelMessage("assistant", "These changes have been superseded by a newer run — send `/undo` again to review the latest.");
+      return;
+    }
+    disableBoth();
+    setChatPanelSendingState(true);
+    try {
+      const report = await deps.executeUndo();
+      appendChatPanelMessage("assistant", deps.buildUndoReport(report));
+    } catch (error) {
+      appendChatPanelMessage("assistant", `Undo failed: ${error?.message || "unknown error"}`);
+    } finally {
+      setChatPanelSendingState(false);
+    }
+  });
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "chief-plan-discard-btn";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", () => {
+    if (cancelBtn.disabled) return;
+    disableBoth();
+    appendChatPanelMessage("assistant", "Undo cancelled — nothing changed.");
+  });
+
+  footer.appendChild(undoBtn);
+  footer.appendChild(cancelBtn);
+}
+
+/**
+ * Shared /undo entry: renders the reversal summary with confirm buttons, or
+ * the honest fallbacks (nothing to reverse / nothing reversible). Used by the
+ * /undo chat command and the router's NL fast-path result hook.
+ */
+function presentUndoConfirmation() {
+  const batch = deps.getUndoableBatch?.();
+  if (!batch) {
+    appendChatPanelMessage("assistant", "I haven't made any changes I can reverse in this session. To undo your own edits, use Roam's native undo (Ctrl/Cmd+Z).");
+    return;
+  }
+  if (!deps.batchHasReversibleEntries?.(batch)) {
+    const parts = [
+      ...(batch.declined || []).map((d) => d.summary),
+      ...(batch.others || []).map((o) => o.label),
+    ];
+    appendChatPanelMessage("assistant", `My last changes (from **"${batch.prompt}"**) can't be auto-reversed: ${parts.join("; ")}. Please check them manually. Your own edits are covered by Roam's native undo (Ctrl/Cmd+Z).`);
+    return;
+  }
+  const messageEl = appendChatPanelMessage("assistant", deps.buildUndoSummary(batch));
+  addUndoActionButtons(messageEl, batch.id);
+}
+
 function normaliseChatPanelMessage(input) {
   const role = String(input?.role || "").toLowerCase() === "user" ? "user" : "assistant";
   const text = String(input?.text || "").trim();
@@ -1112,6 +1184,15 @@ async function handleChatPanelSend() {
     return;
   }
 
+  // /undo — reverse the agent's last mutation batch (roadmap #131). UI-side,
+  // no LLM call: summary + confirm buttons, reversal via the mutation ledger.
+  if (/^\/undo$/i.test(message)) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    presentUndoConfirmation();
+    return;
+  }
+
   // Plan-approval intercept: when a plan is pending and the user types an exact
   // approval keyword, run the execute pass instead of a fresh request. The
   // buttons on the plan message route through here by setting the input to "go".
@@ -1209,6 +1290,7 @@ async function handleChatPanelSend() {
     const askMessage = isPlanApproval ? pendingPlan.originalPrompt : message;
     const askOptions = {
       suppressToasts: true,
+      trackUndo: true,
       onToolCall: onChatToolCall,
       onTextChunk: (chunk) => {
         clearTimeout(chatThinkingTimerId);
@@ -1258,6 +1340,7 @@ async function handleChatPanelSend() {
       addModelIndicator(streamingEl, trace?.model);
       addSaveToDailyPageButton(streamingEl, message, responseText);
       if (result?.planPending) addPlanActionButtons(streamingEl, result.planId);
+      if (result?.undoPending) addUndoActionButtons(streamingEl, result.undoBatchId);
     }
     streamingEl = null;
     appendChatPanelHistory("assistant", responseText);

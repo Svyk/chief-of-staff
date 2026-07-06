@@ -15,6 +15,7 @@
 export const CHAT_COMMANDS = [
   { name: "/plan", summary: "Draft a read-only plan, then approve before executing" },
   { name: "/export", summary: "Save this chat to today's page (add /tag Name to tag it)" },
+  { name: "/undo", summary: "Reverse the changes I made in my last run" },
   { name: "/clear", aliases: ["/new"], summary: "Clear the chat and start fresh" },
   { name: "/compact", summary: "Summarise older turns to free up context" },
   { name: "/help", summary: "Show what I can do" },
