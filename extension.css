@@ -592,6 +592,55 @@
     color: var(--cos-muted);
 }
 
+/* --- Slash-command autocomplete menu --- */
+.chief-slash-menu {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 100%;
+    margin-bottom: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--cos-panel-bg);
+    border: 1px solid var(--cos-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    z-index: 20;
+}
+
+.chief-slash-menu[hidden] {
+    display: none;
+}
+
+.chief-slash-menu-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.chief-slash-menu-item--active {
+    background: var(--cos-assistant-bubble-bg);
+}
+
+.chief-slash-menu-name {
+    font-weight: 600;
+    color: var(--cos-panel-text);
+    white-space: nowrap;
+}
+
+.chief-slash-menu-summary {
+    color: var(--cos-muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 [data-chief-textarea]::placeholder {
     color: var(--cos-muted, #999);
     opacity: 0.7;

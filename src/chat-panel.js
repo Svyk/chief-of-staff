@@ -7,6 +7,7 @@
  */
 
 import iziToast from "izitoast";
+import { filterSlashCommands } from "./chat-commands.js";
 
 // ── Dependency injection ────────────────────────────────────────────
 let deps = {};
@@ -103,6 +104,11 @@ let chatPanelIsOpen = false;
 let chatPanelHistory = [];
 let chatInputHistoryIndex = -1;
 let chatInputDraft = "";
+// Slash-command autocomplete menu state (see createSlashMenu wiring below).
+let slashMenuEl = null;
+let slashMenuMatches = [];
+let slashMenuIndex = 0;
+let slashMenuCloseHandler = null;
 const activeToastKeyboards = new Set();
 let chatPanelPersistTimeoutId = null;
 let chatThinkingTimerId = null;
@@ -895,9 +901,121 @@ function toggleCostTooltip(anchorEl) {
   window.setTimeout(() => document.addEventListener("mousedown", closeHandler), 0);
 }
 
+// ── Slash-command autocomplete menu ─────────────────────────────────
+// Opens when the input is a single `/token` at the start; Arrow keys navigate,
+// Tab/Enter/click complete, Esc / space / outside-click dismiss. The registry
+// (chat-commands.js) is shared with the /help summary so they can't drift.
+
+function isSlashMenuOpen() {
+  return !!(slashMenuEl && !slashMenuEl.hidden);
+}
+
+// Re-filter/open the menu from the current input value. Called on every input event.
+function onSlashInput() {
+  if (!slashMenuEl) return;
+  refreshChatPanelElementRefs();
+  const value = chatPanelInput ? chatPanelInput.value : "";
+  const match = /^\/(\w*)$/.exec(value);
+  if (!match) { closeSlashMenu(); return; }
+  updateSlashMenu(match[1]);
+}
+
+function updateSlashMenu(query) {
+  if (!slashMenuEl) return;
+  slashMenuMatches = filterSlashCommands(query);
+  if (slashMenuMatches.length === 0) { closeSlashMenu(); return; }
+  slashMenuIndex = 0;
+  renderSlashMenu();
+  if (slashMenuEl.hidden) {
+    slashMenuEl.hidden = false;
+    // Defer so the click that focused the input doesn't immediately dismiss it.
+    if (!slashMenuCloseHandler) {
+      slashMenuCloseHandler = (e) => {
+        if (slashMenuEl && !slashMenuEl.contains(e.target) && e.target !== chatPanelInput) {
+          closeSlashMenu();
+        }
+      };
+      window.setTimeout(() => document.addEventListener("mousedown", slashMenuCloseHandler), 0);
+    }
+  }
+}
+
+function renderSlashMenu() {
+  if (!slashMenuEl) return;
+  slashMenuEl.textContent = "";
+  slashMenuMatches.forEach((m, i) => {
+    const row = document.createElement("div");
+    row.className = "chief-slash-menu-item" + (i === slashMenuIndex ? " chief-slash-menu-item--active" : "");
+    const name = document.createElement("span");
+    name.className = "chief-slash-menu-name";
+    name.textContent = m.matchedName;
+    const summary = document.createElement("span");
+    summary.className = "chief-slash-menu-summary";
+    summary.textContent = m.command.summary;
+    row.appendChild(name);
+    row.appendChild(summary);
+    // mousedown (not click) + preventDefault keeps textarea focus through completion.
+    row.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      slashMenuIndex = i;
+      applySlashSelection();
+    });
+    slashMenuEl.appendChild(row);
+  });
+}
+
+function moveSlashSelection(delta) {
+  if (!slashMenuMatches.length) return;
+  const n = slashMenuMatches.length;
+  slashMenuIndex = (slashMenuIndex + delta + n) % n;
+  renderSlashMenu();
+  const active = slashMenuEl?.querySelector(".chief-slash-menu-item--active");
+  active?.scrollIntoView({ block: "nearest" });
+}
+
+function applySlashSelection() {
+  const selected = slashMenuMatches[slashMenuIndex];
+  closeSlashMenu();
+  if (!selected) return;
+  refreshChatPanelElementRefs();
+  if (!chatPanelInput) return;
+  chatPanelInput.value = `${selected.matchedName} `;
+  const end = chatPanelInput.value.length;
+  chatPanelInput.setSelectionRange(end, end);
+  chatPanelInput.focus();
+}
+
+function closeSlashMenu() {
+  if (slashMenuEl) {
+    slashMenuEl.hidden = true;
+    slashMenuEl.textContent = "";
+  }
+  slashMenuMatches = [];
+  slashMenuIndex = 0;
+  if (slashMenuCloseHandler) {
+    document.removeEventListener("mousedown", slashMenuCloseHandler);
+    slashMenuCloseHandler = null;
+  }
+}
+
+// Intercept navigation keys while the menu is open. Returns true if handled
+// (caller must then return early so send/history never fire).
+function handleSlashMenuKeydown(event) {
+  if (!isSlashMenuOpen()) return false;
+  switch (event.key) {
+    case "ArrowDown": event.preventDefault(); moveSlashSelection(1); return true;
+    case "ArrowUp": event.preventDefault(); moveSlashSelection(-1); return true;
+    case "Tab":
+    case "Enter": event.preventDefault(); applySlashSelection(); return true;
+    case "Escape": event.preventDefault(); closeSlashMenu(); return true;
+    default: return false;
+  }
+}
+
 // ── Chat panel send handler ─────────────────────────────────────────
 async function handleChatPanelSend() {
   refreshChatPanelElementRefs();
+  closeSlashMenu();
   if (chatPanelIsSending || !chatPanelInput) return;
 
   // If a background agent run is active (e.g. inbox processing on startup),
@@ -1813,6 +1931,8 @@ export function ensureChatPanel() {
   input.placeholder = "Ask " + assistantName + "...";
   input.rows = 2;
   const inputKeydownHandler = (event) => {
+    // Slash-menu navigation pre-empts send/history when the menu is open.
+    if (handleSlashMenuKeydown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       chatInputHistoryIndex = -1;
@@ -1849,6 +1969,14 @@ export function ensureChatPanel() {
     }
   };
   input.addEventListener("keydown", inputKeydownHandler);
+  input.addEventListener("input", onSlashInput);
+
+  // Slash-command autocomplete menu — a child of the composer (position:
+  // relative), floated above the input. Hidden until `/` is typed.
+  const slashMenu = document.createElement("div");
+  slashMenu.className = "chief-slash-menu";
+  slashMenu.hidden = true;
+  slashMenuEl = slashMenu;
 
   const sendButton = document.createElement("button");
   sendButton.setAttribute("data-chief-chat-send", "true");
@@ -1859,6 +1987,7 @@ export function ensureChatPanel() {
 
   composer.appendChild(input);
   composer.appendChild(sendButton);
+  composer.appendChild(slashMenu);
 
   // Tab bar: Chat | Activity
   const tabBar = document.createElement("div");
@@ -1940,8 +2069,11 @@ export function ensureChatPanel() {
 
   chatPanelCleanupListeners = () => {
     input.removeEventListener("keydown", inputKeydownHandler);
+    input.removeEventListener("input", onSlashInput);
     messages.removeEventListener("click", messagesClickHandler);
     tabBar.removeEventListener("click", tabClickHandler);
+    closeSlashMenu(); // removes the document mousedown handler if attached
+    slashMenuEl = null;
   };
   registerChiefPanelCleanup(container, () => {
     try { chatPanelCleanupDrag?.(); } catch { /* ignore */ }
