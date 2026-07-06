@@ -1,4 +1,5 @@
-import { extractBalancedJsonObjects, extractMcpKeyReference } from "./parse-utils.js";
+import { extractBalancedJsonObjects, extractMcpKeyReference, buildChatTranscriptBlocks, looksLikeRoamUid, buildRoamTagString } from "./parse-utils.js";
+import { detectPlanFlag, stripPlanFlag, extractPlanStructure, setPendingPlan, getPendingPlan, clearPendingPlan } from "./plan-mode.js";
 import {
   initIntentClassifier, classifyIntent, evaluateConfidence,
   clearIntentCache, getCachedClassification
@@ -485,6 +486,7 @@ const SOURCE_TOOL_NAME_MAP = {
 // Write tools that trigger the gathering completeness guard
 const WRITE_TOOL_NAMES = new Set([
   "roam_batch_write",
+  "roam_create_page",
   "roam_create_block",
   "roam_create_blocks",
   "roam_update_block",
@@ -2079,6 +2081,32 @@ async function writeResponseToTodayDailyPage(userPrompt, responseText) {
 }
 
 /**
+ * /export — write the current chat transcript to today's daily page under a
+ * [[Chief of Staff/Transcripts]] header block, so every export aggregates in
+ * that page's linked references. One child block per message; block text is
+ * capped by createRoamBlock's shared 20K truncation. Purely additive writes.
+ */
+async function exportChatTranscriptToDailyPage(history, { tags = "" } = {}) {
+  const blocks = buildChatTranscriptBlocks(history, { assistantName: getAssistantDisplayName() });
+  if (blocks.length === 0) return null;
+
+  const { pageUid, pageTitle } = await ensureDailyPageUid(new Date());
+  if (!pageUid) throw new Error("Could not resolve today's daily page UID.");
+
+  const now = new Date();
+  const timeLabel = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  // Optional user tags (from `/export /tag ...`) go on the header/parent block so
+  // the whole export is discoverable from that tag's linked references.
+  const tagStr = buildRoamTagString(tags);
+  const headerText = `[[Chief of Staff/Transcripts]] — ${timeLabel}${tagStr ? ` ${tagStr}` : ""}`;
+  const headerUid = await createRoamBlock(pageUid, headerText, "last");
+  for (const blockText of blocks) {
+    await createRoamBlock(headerUid, blockText, "last");
+  }
+  return { pageUid, pageTitle, headerUid, count: blocks.length, tags: tagStr };
+}
+
+/**
  * Parse markdown text into a Roam block tree: { text, children: [...] }.
  * Handles headings (##-####), list items (- / * / 1.), and plain paragraphs.
  * Indented list items become children of the preceding item.
@@ -2498,6 +2526,37 @@ async function ensurePageUidByTitle(pageTitle) {
   }
   if (!pageUid) throw new Error(`Could not create page: ${safeTitle}`);
   return pageUid;
+}
+
+/**
+ * Resolve a parent target for CREATE-under-parent write tools. Accepts a real
+ * block/page UID, or a page title / `[[Page]]` reference — creating the page if
+ * it doesn't exist yet, then returning its UID.
+ *
+ * This makes "write under [[Some Page]]" work even when the model passes a page
+ * TITLE (not a UID) for a page that doesn't exist yet — the single most common
+ * failure mode for LLM-driven page creation ("parent_uid not found in graph").
+ * Strings that look like an intended block/DNP UID but aren't found still error,
+ * so genuine typos aren't silently turned into pages. Only used by the
+ * create-under-parent tools; update/move/delete still require an existing UID.
+ */
+async function resolveWriteParentUid(rawParent, label = "parent_uid") {
+  const raw = String(rawParent || "").trim();
+  if (!raw) throw new Error(`${label} is required`);
+
+  const api = getRoamAlphaApi();
+  // Already a real block/page UID? Use it as-is (no page creation).
+  if (api?.data?.pull?.("[:block/uid]", [":block/uid", raw])) return raw;
+
+  const bracketed = /^\[\[.*\]\]$/.test(raw);
+  // Looked like an intended UID but not found — surface a genuine error rather
+  // than silently creating a page named after a typo'd UID.
+  if (!bracketed && looksLikeRoamUid(raw)) {
+    throw new Error(`${label} "${raw}" not found in graph.`);
+  }
+  const title = raw.replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+  if (!title) throw new Error(`${label} "${raw}" not found in graph.`);
+  return ensurePageUidByTitle(title);
 }
 
 async function updateChiefMemory({ page, action = "append", content, block_uid } = {}) {
@@ -4537,7 +4596,7 @@ function publishAskResponse(prompt, responseText, assistantName, suppressToasts 
 // ── tryRunDeterministicAskIntent — extracted to deterministic-router.js ──
 
 async function askChiefOfStaff(userMessage, options = {}) {
-  const { offerWriteToDailyPage = false, suppressToasts = false, onTextChunk = null, onToolCall = null, readOnlyTools = false } = options;
+  const { offerWriteToDailyPage = false, suppressToasts = false, onTextChunk = null, onToolCall = null, readOnlyTools = false, approvedPlan = null } = options;
   const rawPrompt = String(userMessage || "").trim();
   if (!rawPrompt) return;
 
@@ -4567,6 +4626,10 @@ async function askChiefOfStaff(userMessage, options = {}) {
   // Detect /lesson flag — records lessons from the conversation
   const lessonFlag = /(?:^|\s)\/lesson(?:\s|$)/i.test(rawPrompt);
 
+  // Detect /plan flag — plan-first execution: run read-only to draft a plan,
+  // then execute after the user approves (roadmap #128).
+  const planFlag = detectPlanFlag(rawPrompt);
+
   // Detect /allow-homoglyph flag — bypasses the hard-stop homoglyph guard for
   // deliberate use (testing, capturing a homoglyph as data, investigating a
   // phishing payload). The guard still logs and records the usage stat.
@@ -4579,6 +4642,7 @@ async function askChiefOfStaff(userMessage, options = {}) {
     .replace(/(?:^|\s)\/lesson(?:\s|$)/i, " ")
     .replace(/(?:^|\s)\/allow-homoglyph(?:\s|$)/i, " ")
     .trim();
+  if (planFlag) prompt = stripPlanFlag(prompt);
 
   // /lesson — inject lesson-extraction prompt (valid even when prompt is otherwise empty)
   if (lessonFlag) {
@@ -4621,8 +4685,14 @@ async function askChiefOfStaff(userMessage, options = {}) {
     return;
   }
 
-  // /ludicrous implies power mode; determine effective tier
-  const effectiveTier = ludicrousFlag ? "ludicrous" : powerFlag ? "power" : "mini";
+  // /ludicrous implies power mode; determine effective tier.
+  // /plan (both the read-only plan pass and the approved execute pass) forces at
+  // least power — multi-step planning/execution on mini is the claimed-action
+  // failure zone. Forcing here (not finalTier) also short-circuits the mini-only
+  // complexity-routing and intent-gate blocks below.
+  const effectiveTier = ludicrousFlag
+    ? "ludicrous"
+    : (powerFlag || planFlag || approvedPlan) ? "power" : "mini";
 
   // Approvals persist across prompts via the 15-minute TTL in tool-execution.js
   // (matches the documented design in security/ai-agent-security-reference-compliance.md A4).
@@ -4642,7 +4712,9 @@ async function askChiefOfStaff(userMessage, options = {}) {
     ? getToolsConfigState(extensionAPIRef).installedTools.map((tool) => tool?.slug)
     : [];
 
-  const deterministicResult = await tryRunDeterministicAskIntent(prompt, {
+  // Skip the deterministic fast-path for plan/execute passes — a /plan request
+  // is by definition multi-step, and fast-pathing it would bypass the plan.
+  const deterministicResult = (planFlag || approvedPlan) ? null : await tryRunDeterministicAskIntent(prompt, {
     suppressToasts,
     assistantName,
     installedToolSlugsForIntents,
@@ -4832,9 +4904,15 @@ async function askChiefOfStaff(userMessage, options = {}) {
   // ── Prompt split: displayPrompt for UI/storage, agentPrompt for LLM ─────
   const displayPrompt = prompt;
   const cachedIntent = getCachedClassification();
-  const agentPrompt = (cachedIntent?.intent && !cachedIntent.skipped)
+  let agentPrompt = (cachedIntent?.intent && !cachedIntent.skipped)
     ? `[User intent (classified): ${cachedIntent.intent}. Proceed with this interpretation. If during execution you discover the intent was wrong, stop and ask rather than continuing.]\n\n${prompt}`
     : prompt;
+  // Execute pass (approved /plan): signal approval in the user channel too, not
+  // just the system addendum — the model weighs the latest user turn heavily and
+  // will otherwise re-ask for confirmation despite the system-prompt instruction.
+  if (approvedPlan) {
+    agentPrompt = `[I have reviewed and approved your plan via the approval UI. Execute it now — do not ask me to confirm again.]\n\n${agentPrompt}`;
+  }
 
   showInfoToastIfAllowed(
     "Context",
@@ -4843,6 +4921,7 @@ async function askChiefOfStaff(userMessage, options = {}) {
   );
   if (ludicrousFlag) showInfoToastIfAllowed("Ludicrous Mode", "Using ludicrous model for this request.", suppressToasts);
   else if (powerFlag) showInfoToastIfAllowed("Power Mode", "Using power model for this request.", suppressToasts);
+  if (planFlag) showInfoToastIfAllowed("Plan Mode", "Running read-only to draft a plan for your approval.", suppressToasts);
   if (providerOverride) showInfoToastIfAllowed("Provider Override", `Using ${providerSlashMatch[1].toLowerCase()} for this request.`, suppressToasts);
   showInfoToastIfAllowed("Thinking...", displayPrompt.slice(0, 72), suppressToasts);
   const result = await runAgentLoopWithFailover(agentPrompt, {
@@ -4850,7 +4929,9 @@ async function askChiefOfStaff(userMessage, options = {}) {
     tier: finalTier,
     providerOverride: providerOverride || undefined,
     disableFailover: !!providerOverride,
-    readOnlyTools,
+    readOnlyTools: readOnlyTools || planFlag,
+    planMode: planFlag,
+    approvedPlan: approvedPlan || undefined,
     onToolCall: (name, args) => {
       showInfoToastIfAllowed("Using tool", name, suppressToasts);
       if (onToolCall) onToolCall(name, args);
@@ -4903,6 +4984,22 @@ async function askChiefOfStaff(userMessage, options = {}) {
   showInfoToastIfAllowed(assistantName, responseText.slice(0, 280), suppressToasts);
   debugLog("[Chief of Staff] Ask response:", responseText);
   debugLog("[Chief flow] askChiefOfStaff completed via runAgentLoop.");
+
+  // Plan pass: if the model produced a "## Plan" section, store it as the
+  // pending plan and flag the result so the chat panel can offer Run/Discard.
+  // If no plan structure was found, this is silently a normal response (no
+  // buttons) — graceful for both panel and non-panel callers.
+  if (planFlag && result) {
+    const planStructure = extractPlanStructure(responseText);
+    if (planStructure) {
+      const stored = setPendingPlan({ originalPrompt: prompt, planText: planStructure.planText });
+      result.planPending = true;
+      result.planId = stored.id;
+      debugLog("[Chief flow] Pending plan stored:", { id: stored.id, steps: planStructure.steps.length, mutations: planStructure.mutationCount });
+    } else {
+      debugLog("[Chief flow] Plan pass produced no ## Plan section — treating as normal response.");
+    }
+  }
 
   // Persist audit log entry (non-blocking, non-fatal)
   persistAuditLogEntry(_trace, displayPrompt);
@@ -6246,6 +6343,9 @@ function onload({ extensionAPI }) {
     getCostHistorySummary,
     getActiveAgentAbortController: () => getActiveAgentAbortController(),
     writeResponseToTodayDailyPage,
+    exportChatTranscript: exportChatTranscriptToDailyPage,
+    getPendingPlan,
+    clearPendingPlan,
     getRoamAlphaApi: () => window.roamAlphaAPI,
     openRoamPageByTitle,
     askChiefOfStaff,
@@ -6300,6 +6400,7 @@ function onload({ extensionAPI }) {
     withRoamWriteRetry,
     ensurePageUidByTitle,
     ensureDailyPageUid,
+    resolveWriteParentUid,
     getPageTreeByUidAsync,
     getPageTreeByTitleAsync,
     flattenBlockTree,

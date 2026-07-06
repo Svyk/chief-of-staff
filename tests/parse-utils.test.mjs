@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   extractBalancedJsonObjects,
   extractMcpKeyReference,
+  buildChatTranscriptBlocks,
+  looksLikeRoamUid,
+  buildRoamTagString,
 } from "../src/parse-utils.js";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -148,4 +151,126 @@ test("extractMcpKeyReference skips null entries in the array", () => {
   const texts = [null, "**Valid** (Key: VLD)", undefined, ""];
   const result = extractMcpKeyReference(texts);
   assert.ok(result.includes("Valid → VLD"));
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// buildChatTranscriptBlocks
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("buildChatTranscriptBlocks maps user and assistant messages with labels", () => {
+  const history = [
+    { role: "user", text: "What did I work on last week?" },
+    { role: "assistant", text: "You worked on the roadmap." },
+  ];
+  const result = buildChatTranscriptBlocks(history, { assistantName: "Jeeves" });
+  assert.deepEqual(result, [
+    "**User:** What did I work on last week?",
+    "**Jeeves:** You worked on the roadmap.",
+  ]);
+});
+
+test("buildChatTranscriptBlocks defaults assistant name to Chief of Staff", () => {
+  const result = buildChatTranscriptBlocks([{ role: "assistant", text: "Hello" }]);
+  assert.deepEqual(result, ["**Chief of Staff:** Hello"]);
+});
+
+test("buildChatTranscriptBlocks skips entries with no visible text", () => {
+  const history = [
+    { role: "user", text: "  " },
+    { role: "user", text: "" },
+    { role: "user" },
+    null,
+    { role: "assistant", text: "Real message" },
+  ];
+  const result = buildChatTranscriptBlocks(history);
+  assert.equal(result.length, 1);
+  assert.equal(result[0], "**Chief of Staff:** Real message");
+});
+
+test("buildChatTranscriptBlocks treats unknown roles as assistant", () => {
+  const result = buildChatTranscriptBlocks([{ role: "system", text: "Note" }], { assistantName: "COS" });
+  assert.deepEqual(result, ["**COS:** Note"]);
+});
+
+test("buildChatTranscriptBlocks handles non-array and empty input", () => {
+  assert.deepEqual(buildChatTranscriptBlocks(null), []);
+  assert.deepEqual(buildChatTranscriptBlocks(undefined), []);
+  assert.deepEqual(buildChatTranscriptBlocks("not an array"), []);
+  assert.deepEqual(buildChatTranscriptBlocks([]), []);
+});
+
+test("buildChatTranscriptBlocks falls back on blank assistant name", () => {
+  const result = buildChatTranscriptBlocks([{ role: "assistant", text: "Hi" }], { assistantName: "   " });
+  assert.deepEqual(result, ["**Chief of Staff:** Hi"]);
+});
+
+test("buildChatTranscriptBlocks trims message text", () => {
+  const result = buildChatTranscriptBlocks([{ role: "user", text: "  padded  " }]);
+  assert.deepEqual(result, ["**User:** padded"]);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// looksLikeRoamUid
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("looksLikeRoamUid recognises 9-char block UIDs", () => {
+  assert.equal(looksLikeRoamUid("aHirk9S7g"), true);
+  assert.equal(looksLikeRoamUid("CLVXEsLYw"), true);
+  assert.equal(looksLikeRoamUid("_fM7pkQEa"), true);
+  assert.equal(looksLikeRoamUid("abc-de_12"), true);
+});
+
+test("looksLikeRoamUid recognises DNP UIDs", () => {
+  assert.equal(looksLikeRoamUid("07-06-2026"), true);
+  assert.equal(looksLikeRoamUid("12-31-2025"), true);
+});
+
+test("looksLikeRoamUid rejects page titles", () => {
+  assert.equal(looksLikeRoamUid("bbq shelter"), false);   // has a space
+  assert.equal(looksLikeRoamUid("BBQ Shelter"), false);
+  assert.equal(looksLikeRoamUid("Project"), false);        // too short
+  assert.equal(looksLikeRoamUid("bbqShelter1"), false);    // 11 chars
+  assert.equal(looksLikeRoamUid("[[Page]]"), false);       // bracketed ref
+  assert.equal(looksLikeRoamUid(""), false);
+  assert.equal(looksLikeRoamUid(null), false);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// buildRoamTagString
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("buildRoamTagString renders a single-word tag as #Tag", () => {
+  assert.equal(buildRoamTagString("Inbox"), "#Inbox");
+});
+
+test("buildRoamTagString renders a multi-word tag with brackets", () => {
+  assert.equal(buildRoamTagString("Weekly Review"), "#[[Weekly Review]]");
+});
+
+test("buildRoamTagString comma-separates multiple tags", () => {
+  assert.equal(buildRoamTagString("Inbox, Review"), "#Inbox #Review");
+  assert.equal(buildRoamTagString("Inbox, Weekly Review"), "#Inbox #[[Weekly Review]]");
+});
+
+test("buildRoamTagString strips a leading # and [[ ]] the user typed", () => {
+  assert.equal(buildRoamTagString("#Inbox"), "#Inbox");
+  assert.equal(buildRoamTagString("[[Inbox]]"), "#Inbox");
+  assert.equal(buildRoamTagString("[[Weekly Review]]"), "#[[Weekly Review]]");
+});
+
+test("buildRoamTagString dedupes case-insensitively, keeping first form", () => {
+  assert.equal(buildRoamTagString("Inbox, inbox"), "#Inbox");
+  assert.equal(buildRoamTagString("A, B, A"), "#A #B");
+});
+
+test("buildRoamTagString returns empty for blank / invalid input", () => {
+  assert.equal(buildRoamTagString(""), "");
+  assert.equal(buildRoamTagString("   "), "");
+  assert.equal(buildRoamTagString(",, ,"), "");
+  assert.equal(buildRoamTagString(null), "");
+  assert.equal(buildRoamTagString(undefined), "");
+});
+
+test("buildRoamTagString drops stray brackets that would break the #[[ ]] form", () => {
+  assert.equal(buildRoamTagString("Foo]]bar"), "#Foobar");
 });

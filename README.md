@@ -23,6 +23,7 @@ https://www.loom.com/share/9aa3c07de0f147af971d2fc54fe65e4a
 - **Self-healing tool calls** — if the LLM claims to have done something without actually doing it, the extension detects the hallucination, retries with the correct tool, and auto-escalates to a smarter model if needed. No user intervention required.
 - **Three model tiers with automatic routing** — most requests use a fast, cheap model. Append `/power` or `/ludicrous` to your message to force a more capable tier, or let the extension auto-escalate based on request complexity. You can also force a specific provider with `/claude`, `/gemini`, `/openai`, `/mistral`, or `/groq`. See [How tiers work](#how-tiers-work) for details.
 - **Anthropic advisor tool (beta, opt-in)** — when running on Anthropic, the cheap executor (Haiku/Sonnet) can consult Opus on hard judgment calls within a single API call without giving up control of the agent loop. The advisor returns guidance only; it never executes tools. Off by default; enable in Advanced settings. See [Anthropic advisor tool](#anthropic-advisor-tool) for details.
+- **Plan-first execution** — prefix any request with `/plan` to get a preview instead of an action. The assistant explores your graph read-only and lays out the exact steps, tools, and writes it intends, then waits for your one-click approval (Run plan / Discard) before making any changes. See [Chat panel](#chat-panel).
 - **Dry-run mode** — simulate any mutating operation before it executes. Useful for reviewing what the agent would do before committing.
 - **Linked refs filtering** — automatically removes Chief of Staff namespace pages from the linked references section of every non-COS page you visit, keeping your graph tidy. Filters are merged with your existing manual filters (never overwritten) and applied once per page per session, so manual changes are respected. Enabled by default; toggle off in Advanced settings if needed.
 - **Correction capture** — opt-in background feature that detects when you edit COS outputs (briefings, pinned responses) and records the differences on `[[Chief of Staff/Corrections]]`. Corrections are cross-referenced with the Review Queue for feedback loop closure. Runs during idle time only — enable in Settings → Show Automatic Actions.
@@ -54,7 +55,7 @@ Here's what crosses the network when something does run:
 
 **Asking for help** — A dedicated remote MCP server contains semantically chunked documentation from the COS readme, other extension READMEs, and Roam help articles. When you ask "how do I connect to remote MCP servers?" this is where the query goes. It's hosted on a Supabase database controlled by the extension author.
 
-**What it can do inside your graph** — When you ask Chief of Staff to do something, it has access to Roam tools that can search blocks, read pages, create/edit/delete blocks, manage TODOs, and navigate your graph. If Better Tasks is installed, it can also search, create, and modify tasks with full attribute support. These tools only run during an active request — they don't scan or index your graph in the background by default.
+**What it can do inside your graph** — When you ask Chief of Staff to do something, it has access to Roam tools that can search blocks, read pages, create/edit/delete blocks, create pages, manage TODOs, and navigate your graph. If Better Tasks is installed, it can also search, create, and modify tasks with full attribute support. These tools only run during an active request — they don't scan or index your graph in the background by default.
 
 **Safety defaults** — Any action that modifies your graph (creating, editing, or deleting blocks) requires your explicit approval via a confirmation prompt. Read-only operations (searching, fetching) proceed automatically.
 
@@ -385,7 +386,9 @@ The floating chat panel (bottom-right corner by default) provides a persistent c
 
 - **Enter** to send, **Shift+Enter** for a new line.
 - **Arrow Up / Down** to cycle through previous messages (like a terminal).
-- `/clear` resets conversation history and context (same as the Clear button).
+- `/clear` (or `/new`) resets conversation history and context and starts a new chat (same as the Clear button).
+- `/plan <task>` drafts a plan before acting. The assistant explores your graph **read-only**, then lays out the numbered steps, the tools it will call, and the pages/blocks it will write — and waits. Approve with the **Run plan** button (or type `go`), edit by sending a revised request, or **Discard**. Nothing is written until you approve. Ideal for multi-step or consequential operations.
+- `/export` copies the current chat transcript into your graph — onto today's daily page under a `[[Chief of Staff/Transcripts]]` header block, so every export collects in that page's linked references. Add `/tag Name` (or `/tags`) to tag the export header, e.g. `/export /tag Inbox` tags it `#Inbox`; comma-separate for several (`/export /tag Inbox, Weekly Review`).
 - `/doctor` runs a health check across API keys, MCP servers, memory, skills, cron jobs, Composio, and Extension Tools — results displayed inline.
 - `/lesson` reviews the conversation and records lessons learned to `[[Chief of Staff/Lessons Learned]]`. Add a topic to focus the reflection (e.g. `/lesson error handling`).
 - Suffix a message with `/power` or `/ludicrous` to use a more capable model for that request. Use `/claude`, `/gemini`, `/openai`, `/mistral`, or `/groq` to force a specific provider.

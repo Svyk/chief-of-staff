@@ -680,6 +680,53 @@ export function addSaveToDailyPageButton(messageEl, promptText, responseText) {
   footer.appendChild(btn);
 }
 
+/**
+ * Attach [Run plan] / [Discard] buttons to a plan-pass message (roadmap #128).
+ * `planId` pins these buttons to a specific pending plan; if the plan has since
+ * been superseded (new /plan) or expired (15-min TTL), the buttons degrade to a
+ * notice instead of executing a stale plan.
+ */
+function addPlanActionButtons(messageEl, planId) {
+  if (!messageEl) return;
+  const footer = getOrCreateMessageFooter(messageEl);
+
+  // Disable both buttons once either is actioned, so a plan can't be run or
+  // discarded twice from the same message.
+  const disableBoth = () => { runBtn.disabled = true; discardBtn.disabled = true; };
+
+  const runBtn = document.createElement("button");
+  runBtn.className = "chief-plan-run-btn";
+  runBtn.textContent = "Run plan";
+  runBtn.addEventListener("click", () => {
+    if (runBtn.disabled || chatPanelIsSending) return;
+    const current = deps.getPendingPlan?.();
+    if (!current || current.id !== planId) {
+      disableBoth();
+      appendChatPanelMessage("assistant", "This plan has expired or been superseded — send `/plan` again to draft a fresh one.");
+      return;
+    }
+    disableBoth();
+    // Route through the normal send pipeline: the approval intercept in
+    // handleChatPanelSend swaps this for the execute pass.
+    refreshChatPanelElementRefs();
+    if (chatPanelInput) chatPanelInput.value = "go";
+    handleChatPanelSend();
+  });
+
+  const discardBtn = document.createElement("button");
+  discardBtn.className = "chief-plan-discard-btn";
+  discardBtn.textContent = "Discard";
+  discardBtn.addEventListener("click", () => {
+    if (discardBtn.disabled) return;
+    disableBoth();
+    deps.clearPendingPlan?.();
+    appendChatPanelMessage("assistant", "Plan discarded.");
+  });
+
+  footer.appendChild(runBtn);
+  footer.appendChild(discardBtn);
+}
+
 function normaliseChatPanelMessage(input) {
   const role = String(input?.role || "").toLowerCase() === "user" ? "user" : "assistant";
   const text = String(input?.text || "").trim();
@@ -872,10 +919,11 @@ async function handleChatPanelSend() {
   const message = String(chatPanelInput.value || "").trim();
   if (!message) return;
 
-  if (/^\/clear$/i.test(message)) {
+  if (/^\/(clear|new)$/i.test(message)) {
     chatPanelInput.value = "";
     clearChatPanelHistory();
     if (deps.clearConversationContext) deps.clearConversationContext({ persist: true });
+    deps.clearPendingPlan?.();
     renderEmptyStateHint(chatPanelMessages, deps.getAssistantDisplayName());
     return;
   }
@@ -916,6 +964,41 @@ async function handleChatPanelSend() {
     }
     return;
   }
+
+  // /export, optionally with `/tag` (or `/tags`) <name>[, <name>...] to tag the export header.
+  const exportMatch = message.match(/^\/export(?:\s+\/tags?\b\s*(.*))?$/i);
+  if (exportMatch) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    if (typeof deps.exportChatTranscript !== "function") {
+      appendChatPanelMessage("assistant", "Export is not available.");
+      return;
+    }
+    if (chatPanelHistory.length === 0) {
+      appendChatPanelMessage("assistant", "Nothing to export — the chat is empty.");
+      return;
+    }
+    const tags = (exportMatch[1] || "").trim();
+    setChatPanelSendingState(true);
+    try {
+      const result = await deps.exportChatTranscript([...chatPanelHistory], { tags });
+      const tagNote = result?.tags ? ` (tagged ${result.tags})` : "";
+      appendChatPanelMessage("assistant", result
+        ? `Exported ${result.count} message${result.count === 1 ? "" : "s"} to today's daily page (${result.pageTitle}) under [[Chief of Staff/Transcripts]]${tagNote}.`
+        : "Nothing to export — the chat is empty.");
+    } catch (error) {
+      appendChatPanelMessage("assistant", `Export failed: ${error?.message || "could not write to today's daily page."}`);
+    } finally {
+      setChatPanelSendingState(false);
+    }
+    return;
+  }
+
+  // Plan-approval intercept: when a plan is pending and the user types an exact
+  // approval keyword, run the execute pass instead of a fresh request. The
+  // buttons on the plan message route through here by setting the input to "go".
+  const pendingPlan = deps.getPendingPlan?.();
+  const isPlanApproval = pendingPlan && /^(go|run|execute|approve)$/i.test(message);
 
   removeEmptyStateHint();
   appendChatPanelMessage("user", message);
@@ -1005,7 +1088,8 @@ async function handleChatPanelSend() {
   }, 20000);
 
   try {
-    const result = await deps.askChiefOfStaff(message, {
+    const askMessage = isPlanApproval ? pendingPlan.originalPrompt : message;
+    const askOptions = {
       suppressToasts: true,
       onToolCall: onChatToolCall,
       onTextChunk: (chunk) => {
@@ -1040,7 +1124,12 @@ async function handleChatPanelSend() {
           }
         }
       }
-    });
+    };
+    if (isPlanApproval) askOptions.approvedPlan = pendingPlan.planText;
+    const result = await deps.askChiefOfStaff(askMessage, askOptions);
+    // The execute pass ran to completion — clear the pending plan so its buttons
+    // and the "go" keyword stop being live. Failure keeps it (retry possible).
+    if (isPlanApproval) deps.clearPendingPlan?.();
     const responseText = String(result?.text || "").trim().replace(/\[Key reference:[^\]]*\]\s*/g, "").trim() || "No response generated.";
 
     if (streamingEl && document.body.contains(streamingEl)) {
@@ -1050,6 +1139,7 @@ async function handleChatPanelSend() {
       const trace = typeof deps.getLastAgentRunTrace === "function" ? deps.getLastAgentRunTrace() : null;
       addModelIndicator(streamingEl, trace?.model);
       addSaveToDailyPageButton(streamingEl, message, responseText);
+      if (result?.planPending) addPlanActionButtons(streamingEl, result.planId);
     }
     streamingEl = null;
     appendChatPanelHistory("assistant", responseText);

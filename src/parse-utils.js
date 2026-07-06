@@ -85,3 +85,56 @@ export function extractMcpKeyReference(mcpResultTexts) {
   const capped = entries.slice(0, 50);
   return `[Key reference: ${capped.join("; ")}]`;
 }
+
+/**
+ * True when a string looks like an intended Roam identifier rather than a page
+ * title: a 9-char block UID (letters/digits/_/-) or a DNP UID (MM-DD-YYYY).
+ * Used to decide whether a missing write-target should error (bad UID) or be
+ * treated as a page title to create.
+ */
+export function looksLikeRoamUid(str) {
+  const s = String(str || "").trim();
+  return /^[A-Za-z0-9_-]{9}$/.test(s) || /^\d{2}-\d{2}-\d{4}$/.test(s);
+}
+
+/**
+ * Format a raw tag string (from `/export /tag ...`) into a Roam tag string.
+ * Comma-separates into multiple tags; each renders idiomatically as `#Tag`
+ * (no spaces) or `#[[Multi Word]]` (has spaces). Strips any leading `#` or
+ * `[[ ]]` the user typed, dedupes case-insensitively, and drops stray brackets
+ * that would break the `#[[...]]` form. Returns "" for empty/invalid input.
+ */
+export function buildRoamTagString(rawTags) {
+  if (!rawTags || typeof rawTags !== "string") return "";
+  const out = [];
+  const seen = new Set();
+  for (const part of rawTags.split(",")) {
+    const clean = part.replace(/[#\[\]]/g, "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(/\s/.test(clean) ? `#[[${clean}]]` : `#${clean}`);
+  }
+  return out.join(" ");
+}
+
+/**
+ * Build block strings for a chat transcript export (/export command).
+ * Takes the chat panel history (array of { role, text }) and returns an
+ * array of Roam block strings, one per message, prefixed with a bold
+ * speaker label. Entries with no visible text are skipped; unknown roles
+ * are treated as assistant (mirrors normaliseChatPanelMessage).
+ */
+export function buildChatTranscriptBlocks(history, { assistantName = "Chief of Staff" } = {}) {
+  if (!Array.isArray(history)) return [];
+  const safeName = String(assistantName || "Chief of Staff").trim() || "Chief of Staff";
+  const blocks = [];
+  for (const entry of history) {
+    const text = String(entry?.text || "").trim();
+    if (!text) continue;
+    const isUser = String(entry?.role || "").toLowerCase() === "user";
+    blocks.push(`**${isUser ? "User" : safeName}:** ${text}`);
+  }
+  return blocks;
+}

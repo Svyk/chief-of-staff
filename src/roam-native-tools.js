@@ -12,7 +12,8 @@ let roamNativeToolsCache = null;
 export const ROAM_CORE_TOOLS = new Set([
   "roam_search", "roam_create_block", "roam_update_block",
   "roam_get_page", "roam_get_block_children", "roam_get_daily_page",
-  "roam_open_page", "roam_delete_block", "roam_create_blocks", "roam_web_fetch"
+  "roam_open_page", "roam_delete_block", "roam_create_blocks",
+  "roam_create_page", "roam_web_fetch"
 ]);
 
 const ROAM_TOOL_CATEGORIES = {
@@ -276,9 +277,9 @@ export function getRoamNativeTools() {
         required: ["parent_uid", "text"]
       },
       execute: async ({ parent_uid, text, order = "last" } = {}) => {
-        const parentUid = String(parent_uid || "").trim();
-        if (!parentUid) throw new Error("parent_uid is required");
-        deps.requireRoamUidExists(parentUid, "parent_uid");
+        // Resolves a real UID, or a page title / [[Page]] ref (creating the page
+        // if needed) — so "create a block under [[New Page]]" works directly.
+        const parentUid = await deps.resolveWriteParentUid(parent_uid, "parent_uid");
         const uid = await deps.createRoamBlock(parentUid, text, order);
         return {
           success: true,
@@ -918,9 +919,10 @@ export function getRoamNativeTools() {
           workItems.push({ parentUid, blocks });
         }
 
-        // Validate all target UIDs exist before any writes
-        for (const { parentUid } of workItems) {
-          deps.requireRoamUidExists(parentUid, "parent_uid");
+        // Resolve all target parents before any writes — accepts real UIDs or
+        // page titles / [[Page]] refs, creating pages that don't exist yet.
+        for (const item of workItems) {
+          item.parentUid = await deps.resolveWriteParentUid(item.parentUid, "parent_uid");
         }
 
         const allBlocks = workItems.flatMap(w => w.blocks);
@@ -959,9 +961,9 @@ export function getRoamNativeTools() {
         required: ["parent_uid", "markdown"]
       },
       execute: async ({ parent_uid, markdown, order = "last" } = {}) => {
-        const parentUid = String(parent_uid || "").trim();
-        if (!parentUid) throw new Error("parent_uid is required");
-        deps.requireRoamUidExists(parentUid, "parent_uid");
+        // Accepts a real UID or a page title / [[Page]] ref (creating the page
+        // if needed), so structured content can target a new page directly.
+        const parentUid = await deps.resolveWriteParentUid(parent_uid, "parent_uid");
         const md = String(markdown || "").trim();
         if (!md) throw new Error("markdown content is required");
         if (md.length > 50000) throw new Error(`Markdown too large (${md.length} chars). Maximum is 50,000 characters.`);
@@ -996,6 +998,70 @@ export function getRoamNativeTools() {
           }
           return { success: true, parent_uid: parentUid, uids, fallback: true };
         }
+      }
+    },
+    {
+      name: "roam_create_page",
+      isMutating: true,
+      description: "Create a Roam page by title and (optionally) populate it with markdown content, returning the page's UID. Use this for any 'create/make a page' request. IMPORTANT: to put content ON a page, always create the page with this tool and let its content go under the returned page UID — do NOT create a `[[Page]]` link block on the daily note and nest content under that block, because that puts the content on the daily note, not the page. If the page already exists it is reused and the markdown (if any) is appended.",
+      input_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Exact page title, without the surrounding [[ ]]." },
+          markdown: { type: "string", description: "Optional markdown to populate the page. Use ## headings for sections and - lists for items; headings become top-level blocks on the page." },
+          open: { type: "boolean", description: "Open the page in the main window after creating it. Default false." }
+        },
+        required: ["title"]
+      },
+      execute: async ({ title, markdown, open = false } = {}) => {
+        const api = deps.getRoamAlphaApi();
+        const pageTitle = String(title || "").trim().replace(/^\[\[/, "").replace(/\]\]$/, "").trim();
+        if (!pageTitle) throw new Error("title is required");
+
+        // Detect prior existence so we can report created vs reused honestly.
+        let existedBefore = false;
+        try {
+          const existing = await deps.getPageTreeByTitleAsync(pageTitle);
+          existedBefore = !!existing?.uid;
+        } catch (_) { /* treat lookup failure as "unknown" — ensurePageUidByTitle still resolves it */ }
+
+        // Resolve (creating if needed) the PAGE uid — never a daily-note block.
+        const pageUid = await deps.ensurePageUidByTitle(pageTitle);
+        if (!pageUid) throw new Error(`Could not create or resolve page: "${pageTitle}"`);
+
+        // Optionally populate under the page uid, mirroring roam_batch_write's
+        // native-fromMarkdown-then-fallback-parser pattern and safety caps.
+        let uids = [];
+        const md = String(markdown || "").trim();
+        if (md) {
+          if (md.length > 50000) throw new Error(`Markdown too large (${md.length} chars). Maximum is 50,000 characters.`);
+          try {
+            if (!api?.data?.block?.fromMarkdown) throw new Error("Roam fromMarkdown API unavailable.");
+            const result = await api.data.block.fromMarkdown({
+              location: { "parent-uid": pageUid, order: "last" },
+              "markdown-string": md
+            });
+            uids = result;
+          } catch (fmError) {
+            deps.debugLog?.("[Chief flow] roam_create_page: fromMarkdown failed, using fallback parser:", fmError?.message);
+            const blockTree = deps.parseMarkdownToBlockTree(md);
+            if (blockTree.length) {
+              const nodeCount = deps.countBlockTreeNodes(blockTree);
+              if (nodeCount > deps.MAX_CREATE_BLOCKS_TOTAL) {
+                throw new Error(`Content too large (${nodeCount} blocks), exceeding the ${deps.MAX_CREATE_BLOCKS_TOTAL} safety cap.`);
+              }
+              for (let i = 0; i < blockTree.length; i++) {
+                uids.push(await deps.createRoamBlockTree(pageUid, blockTree[i], i));
+              }
+            }
+          }
+        }
+
+        if (open) {
+          try { await api.ui.mainWindow.openPage({ page: { uid: pageUid } }); } catch (_) { /* navigation is best-effort */ }
+        }
+
+        return { success: true, page_uid: pageUid, title: pageTitle, created: !existedBefore, uids };
       }
     },
     {

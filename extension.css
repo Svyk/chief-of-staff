@@ -401,6 +401,44 @@
     cursor: default;
 }
 
+/* Plan-mode action buttons (roadmap #128) — always visible, not hover-reveal */
+.chief-plan-run-btn,
+.chief-plan-discard-btn {
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    padding: 5px 12px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-left: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.chief-plan-run-btn {
+    background: #5c7cfa;
+    color: #fff;
+}
+
+.chief-plan-run-btn:hover:not(:disabled) {
+    background: #4c6ef5;
+}
+
+.chief-plan-discard-btn {
+    background: var(--cos-assistant-bubble-bg);
+    color: var(--cos-panel-text);
+}
+
+.chief-plan-discard-btn:hover:not(:disabled) {
+    background: rgba(148, 163, 184, 0.25);
+}
+
+.chief-plan-run-btn:disabled,
+.chief-plan-discard-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 /* Model / tier indicator */
 .chief-msg-model {
     font-size: 10px;

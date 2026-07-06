@@ -582,7 +582,7 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
       && resolvedTool.isMutating === false
       && resolvedTool._source !== "extension"; // don't trust extension readOnly claims
     if (!isExplicitlyReadOnly) {
-      return { error: "Read-only mode: this tool is blocked for inbox-triggered requests. Summarise your findings for the human to act on." };
+      return { error: "Read-only mode: mutating tools are blocked in this turn. Do not call them — describe the action in your plan or summary instead." };
     }
   }
 

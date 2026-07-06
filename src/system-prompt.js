@@ -240,6 +240,8 @@ When creating or editing content in Roam, use these syntax rules:
 
 **Components:** \`{{or: A|B|C}}\` (dropdown), \`{{=:text|hidden}}\` (tooltip), \`{{iframe: URL}}\`, \`:hiccup [:iframe {:src "URL"}]\`
 
+**Creating a page:** to make a new page, use \`roam_create_page\` (title + optional markdown), or pass the page title / \`[[Page]]\` as \`parent_uid\` to a write tool — the page is created automatically. Do NOT write a page's content as blocks under the daily note unless the user explicitly asked for a daily-note entry.
+
 **Structural rules:** 2–4 nesting levels preferred (rarely exceed 5). One idea per block. No empty blocks or \`---\` dividers — use hierarchy for separation. Use \`- \` bullets (never \`* \`).`;
 }
 
