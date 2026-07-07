@@ -9,6 +9,10 @@ import {
   executeUndo as executeLedgerUndo,
 } from "./mutation-ledger.js";
 import {
+  setLastAskMeta, getLastAskMeta, clearLastAskMeta,
+  buildWhyReport, buildStatusReport, buildVerifyReport,
+} from "./transparency.js";
+import {
   initIntentClassifier, classifyIntent, evaluateConfidence,
   clearIntentCache, getCachedClassification
 } from "./intent-classifier.js";
@@ -4459,6 +4463,49 @@ function showLastRunTrace() {
   showInfoToast("Run trace logged", `${toolCount} tool call(s), ${statusLabel}. See console.`);
 }
 
+/**
+ * Assemble the /status snapshot (#134). Read-only and cheap: everything here
+ * is already in memory or a settings read — no network calls, no Composio
+ * connect (unlike getDeterministicConnectionSummary, which reconciles live).
+ */
+function getStatusSnapshot() {
+  const state = extensionAPIRef ? getToolsConfigState(extensionAPIRef) : { installedTools: [] };
+  const installed = state.installedTools.filter((t) => t.installState === "installed");
+  const pendingAuth = state.installedTools.filter((t) => t.installState === "pending_auth");
+  const describeMcpEntry = (entry, fallbackName) => ({
+    name: entry.serverName || fallbackName,
+    tools: entry.tools?.length || 0,
+  });
+  return {
+    now: Date.now(),
+    session: getSessionTokenUsage(),
+    cronJobs: loadCronJobs(),
+    idle: getIdleSchedulerState(),
+    pendingPlan: getPendingPlan(),
+    undoBatch: getUndoableBatch(),
+    composio: {
+      connected: Boolean(mcpClient?.callTool),
+      installedCount: installed.length,
+      pendingCount: pendingAuth.length,
+    },
+    localMcp: [...getLocalMcpClients().values()].filter((e) => e?.client).map((e) => describeMcpEntry(e, "local server")),
+    remoteMcp: [...getRemoteMcpClients().values()].filter((e) => e?.client).map((e) => describeMcpEntry(e, "remote server")),
+  };
+}
+
+/**
+ * /verify (#134): score the last agent response on demand via the eval judge.
+ * force: true bypasses the background-eval enabled toggle and sampling rate.
+ */
+async function verifyLastResponse() {
+  const trace = getLastAgentRunTrace();
+  if (!trace) return null;
+  const meta = getLastAskMeta();
+  const userPrompt = (meta?.kind === "agent" && meta.prompt) || trace.promptPreview || "";
+  const responseText = (meta?.kind === "agent" && meta.responseText) || trace.resultTextPreview || "";
+  return evaluateAgentRun(trace, userPrompt, responseText, { force: true });
+}
+
 function getChiefRuntimeStats() {
   const pollStates = Array.from(authPollStateBySlug.values());
   const activePolls = pollStates.filter((state) => !state?.stopped).length;
@@ -4738,6 +4785,8 @@ async function askChiefOfStaff(userMessage, options = {}) {
   });
   if (deterministicResult) {
     debugLog("[Chief flow] askChiefOfStaff completed via deterministic route.");
+    // /why (#134): the last response was an instant pattern match, no model call
+    setLastAskMeta({ kind: "deterministic", promptPreview: prompt.slice(0, 180) });
     return deterministicResult;
   }
   debugLog("[Chief flow] Falling back to runAgentLoop.");
@@ -4781,11 +4830,13 @@ async function askChiefOfStaff(userMessage, options = {}) {
   let finalTier = effectiveTier;
   let finalPowerMode = powerFlag || ludicrousFlag;
   let routingResult = null;
+  let escalationNote = null; // /why (#134): which mechanism escalated the tier
 
   // Hard-escalate for routed MCP server mentions (bypass scoring)
   if (mentionsRoutedMcpServer) {
     finalTier = "power";
     finalPowerMode = true;
+    escalationNote = { mcpRouted: true };
     recordUsageStat("tierEscalations");
     showInfoToastIfAllowed("Power Mode", "Auto-escalating to power tier for routed MCP server query.", suppressToasts);
   }
@@ -4817,6 +4868,7 @@ async function askChiefOfStaff(userMessage, options = {}) {
     if (routing.tier && routing.tier !== "mini" && (routing.tier === "power" || routing.tier === "ludicrous")) {
       finalTier = routing.tier;
       finalPowerMode = true;
+      escalationNote = { routingReason: routing.reason };
       recordUsageStat("tierEscalations");
       showInfoToastIfAllowed("Power Mode", `Auto-escalating: ${routing.reason}`, suppressToasts);
     }
@@ -4909,6 +4961,7 @@ async function askChiefOfStaff(userMessage, options = {}) {
       if (classification.estimatedTools >= 5 && finalTier === "mini") {
         finalTier = "power";
         finalPowerMode = true;
+        escalationNote = { intentEscalated: true };
         recordUsageStat("tierEscalations");
         showInfoToastIfAllowed("Power Mode", "Auto-escalating: intent classifier estimates high complexity.", suppressToasts);
       }
@@ -4995,6 +5048,24 @@ async function askChiefOfStaff(userMessage, options = {}) {
   const mcpKeyRef = extractMcpKeyReference(result?.mcpResultTexts);
   const enrichedResponse = mcpKeyRef ? `${mcpKeyRef}\n\n${responseText}` : responseText;
   appendConversationTurn(displayPrompt, enrichedResponse);
+  // /why + /verify (#134): record how this response was produced. The
+  // prompt/response pair is kept so /verify can score it on demand.
+  setLastAskMeta({
+    kind: "agent",
+    promptPreview: displayPrompt.slice(0, 180),
+    prompt: displayPrompt.slice(0, 500),
+    responseText: responseText.slice(0, 4000),
+    tier: finalTier,
+    baseTier: effectiveTier,
+    flags: {
+      power: powerFlag,
+      ludicrous: ludicrousFlag,
+      plan: planFlag,
+      approvedPlan: Boolean(approvedPlan),
+      providerOverride: providerOverride || null,
+    },
+    escalation: escalationNote || {},
+  });
   showInfoToastIfAllowed(assistantName, responseText.slice(0, 280), suppressToasts);
   debugLog("[Chief of Staff] Ask response:", responseText);
   debugLog("[Chief flow] askChiefOfStaff completed via runAgentLoop.");
@@ -6366,6 +6437,13 @@ function onload({ extensionAPI }) {
     buildUndoSummary,
     buildUndoReport,
     executeUndo: executeLedgerUndo,
+    // Transparency trio (#134)
+    getLastAskMeta,
+    buildWhyReport,
+    buildStatusReport,
+    buildVerifyReport,
+    getStatusSnapshot,
+    verifyLastResponse,
     getRoamAlphaApi: () => window.roamAlphaAPI,
     openRoamPageByTitle,
     askChiefOfStaff,
@@ -7019,6 +7097,7 @@ function onunload() {
   detachAllToastKeyboards();
   clearToolApprovals();
   clearLedger();
+  clearLastAskMeta();
   destroyChatPanel();
   clearConversationContext();
   clearStartupAuthPollTimers();

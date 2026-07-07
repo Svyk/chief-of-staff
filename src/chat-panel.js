@@ -1193,6 +1193,63 @@ async function handleChatPanelSend() {
     return;
   }
 
+  // /why — explain how the last response was produced (roadmap #134).
+  // Read-only, no LLM call: renders the last-ask metadata + run trace.
+  if (/^\/why$/i.test(message)) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    const report = typeof deps.buildWhyReport === "function"
+      ? deps.buildWhyReport(deps.getLastAskMeta?.(), deps.getLastAgentRunTrace?.())
+      : "Why is not available.";
+    appendChatPanelMessage("assistant", report);
+    return;
+  }
+
+  // /status — what the agent is doing autonomously right now (roadmap #134).
+  // Read-only, no LLM call: connections, cron jobs, idle tasks, pending state.
+  if (/^\/status$/i.test(message)) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    const report = typeof deps.getStatusSnapshot === "function" && typeof deps.buildStatusReport === "function"
+      ? deps.buildStatusReport(deps.getStatusSnapshot())
+      : "Status is not available.";
+    appendChatPanelMessage("assistant", report);
+    return;
+  }
+
+  // /verify — run the eval judge on the last response, on demand (roadmap #134).
+  // One cheap LLM call to an independent judge model; works even when the
+  // background Post-Run Evaluation toggle is off.
+  if (/^\/verify$/i.test(message)) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    if (typeof deps.verifyLastResponse !== "function") {
+      appendChatPanelMessage("assistant", "Verify is not available.");
+      return;
+    }
+    const meta = deps.getLastAskMeta?.();
+    if (meta?.kind === "deterministic") {
+      appendChatPanelMessage("assistant", "My last response was an instant pattern-matched answer — no model was involved, so there's nothing to evaluate. Ask me something that needs reasoning, then `/verify` it.");
+      return;
+    }
+    if (!deps.getLastAgentRunTrace?.()) {
+      appendChatPanelMessage("assistant", "There's no response to verify yet this session — ask me something first.");
+      return;
+    }
+    setChatPanelSendingState(true);
+    try {
+      const evalResult = await deps.verifyLastResponse();
+      appendChatPanelMessage("assistant", deps.buildVerifyReport
+        ? deps.buildVerifyReport(evalResult)
+        : (evalResult ? JSON.stringify(evalResult.scores) : "Verification failed."));
+    } catch (error) {
+      appendChatPanelMessage("assistant", `Verification failed: ${error?.message || "unknown error"}`);
+    } finally {
+      setChatPanelSendingState(false);
+    }
+    return;
+  }
+
   // Plan-approval intercept: when a plan is pending and the user types an exact
   // approval keyword, run the execute pass instead of a fresh request. The
   // buttons on the plan message route through here by setting the input to "go".
