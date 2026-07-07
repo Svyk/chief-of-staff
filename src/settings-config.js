@@ -44,6 +44,23 @@ export function rebuildSettingsPanel(extensionAPI) {
   }, 60);
 }
 
+// Rebuild + force a REMOUNT of every settings row. panel.create alone
+// re-renders the open panel (how the disclosure toggles reveal rows), but
+// re-rendered select widgets keep their last interactive state and ignore the
+// `value` prop — so a programmatic change to e.g. llm-provider stays visually
+// stale. Registering an empty config for one tick unmounts all rows; the real
+// config then mounts fresh widgets that read the saved settings.
+export function remountSettingsPanel(extensionAPI) {
+  setTimeout(() => {
+    try {
+      extensionAPI.settings.panel.create({ tabTitle: "Chief of Staff", settings: [] });
+    } catch { /* fall through to the full rebuild */ }
+    setTimeout(() => {
+      extensionAPI.settings.panel.create(buildSettingsConfig(extensionAPI));
+    }, 50);
+  }, 60);
+}
+
 // Return blank string (not the placeholder default) for Composio settings
 // so unconfigured fields stay empty rather than sending placeholder strings.
 function getComposioSettingOrBlank(extensionAPI, key) {
@@ -66,9 +83,12 @@ function buildCustomProviderLabel(extensionAPI, id) {
 
 function buildProviderSelectItems(extensionAPI) {
   const builtins = ["anthropic", "openai", "gemini", "mistral", "groq"];
+  // ChatGPT-subscription provider appears once connected (mirrors custom slots
+  // appearing only once configured). Plain id — no compound label to parse.
+  const codex = deps.getCodexAuthStatus?.(extensionAPI)?.connected ? ["openai-codex"] : [];
   const customs = (deps.listCustomProviderIds ? deps.listCustomProviderIds(extensionAPI) : [])
     .map(id => buildCustomProviderLabel(extensionAPI, id));
-  return [...builtins, ...customs];
+  return [...builtins, ...codex, ...customs];
 }
 
 // Resolve the dropdown's current `value` to match what's in `items`.
@@ -78,6 +98,22 @@ function buildProviderSelectValue(extensionAPI) {
   const canonical = deps.getLlmProvider(extensionAPI);
   if (!canonical.startsWith("custom-")) return canonical;
   return buildCustomProviderLabel(extensionAPI, canonical);
+}
+
+// Status + guardrail text for the ChatGPT-subscription (Codex OAuth) block.
+function buildCodexConnectionDescription(extensionAPI) {
+  const status = deps.getCodexAuthStatus ? deps.getCodexAuthStatus(extensionAPI) : { connected: false };
+  let statusLine;
+  if (status.dead) {
+    statusLine = `Auth expired (${status.deadReason || "refresh failed"}) — reconnect required.`;
+  } else if (status.connected) {
+    statusLine = `Connected${status.email ? ` as ${status.email}` : ""}. Select "openai-codex" as your LLM Provider above to use it.`;
+  } else {
+    statusLine = "Not connected.";
+  }
+  return `${statusLine} EXPERIMENTAL — routes GPT calls through your ChatGPT Plus/Pro subscription via OpenAI's Codex device sign-in instead of API billing. `
+    + "Grey-area, best-effort path: OpenAI could restrict it at any time, and your plan's weekly usage caps apply. "
+    + "Keep an API key configured — Chief of Staff falls back to API-key providers automatically if subscription auth fails.";
 }
 
 function getModelSmokeSummary(extensionAPI) {
@@ -162,6 +198,24 @@ export function buildSettingsConfig(extensionAPI) {
         value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.openaiApiKey, "") || deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.llmApiKey, ""),
         placeholder: "sk-..."
       }
+    },
+    {
+      id: "openai-codex-connection",
+      name: "ChatGPT Subscription (EXPERIMENTAL)",
+      description: buildCodexConnectionDescription(extensionAPI),
+      action: {
+        type: "button",
+        content: deps.getCodexAuthStatus?.(extensionAPI)?.connected ? "Disconnect" : "Connect",
+        onClick: async () => {
+          const status = deps.getCodexAuthStatus?.(extensionAPI);
+          if (status?.connected) {
+            if (deps.disconnectCodex) deps.disconnectCodex(extensionAPI);
+          } else if (deps.connectCodex) {
+            await deps.connectCodex(extensionAPI);
+          }
+          remountSettingsPanel(extensionAPI);
+        },
+      },
     },
     {
       id: deps.SETTINGS_KEYS.geminiApiKey,

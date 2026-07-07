@@ -71,7 +71,7 @@ For full technical details on security measures, injection defences, and credent
 
 | Requirement | Notes |
 |---|---|
-| At least one LLM API key (Anthropic, OpenAI, Gemini, Mistral, Groq) **or** a custom OpenAI-compatible endpoint (LM Studio, Ollama, OpenRouter, vLLM, …) | Direct browser fetch — incurs API costs at your provider's rates. Groq requires a paid plan (Dev tier or above) — the free tier's token-per-minute limit is too low. Local servers (LM Studio, Ollama) cost nothing and run offline. |
+| At least one LLM API key (Anthropic, OpenAI, Gemini, Mistral, Groq), **or** a ChatGPT Plus/Pro subscription (see [ChatGPT subscription auth](#chatgpt-subscription-auth-experimental)), **or** a custom OpenAI-compatible endpoint (LM Studio, Ollama, OpenRouter, vLLM, …) | API keys use direct browser fetch — incurs API costs at your provider's rates. Groq requires a paid plan (Dev tier or above) — the free tier's token-per-minute limit is too low. ChatGPT subscription auth draws on the plan's weekly quota instead of API billing (experimental). Local servers (LM Studio, Ollama) cost nothing and run offline. |
 | Composio account + API key | Only required for external tool integrations. Graph and task features work without it. |
 | [Better Tasks](https://github.com/mlava/recurring-tasks) extension | Only required for Better Tasks integration. Plain TODO search works without it. |
 
@@ -85,7 +85,7 @@ Open **Settings > Chief of Staff** and fill in:
 
 - **Your Name** — how Chief of Staff addresses you
 - **Assistant Name** — display-only label used in chat header and toasts (default: `Chief of Staff`)
-- **LLM Provider** — `anthropic` (default), `openai`, `gemini`, `mistral`, `groq`, or one of your configured custom slots (see [Custom OpenAI-compatible providers](#custom-openai-compatible-providers-lm-studio-ollama-openrouter-vllm-) below).
+- **LLM Provider** — `anthropic` (default), `openai`, `gemini`, `mistral`, `groq`, `openai-codex` (appears once you connect a ChatGPT subscription — see [ChatGPT subscription auth](#chatgpt-subscription-auth-experimental) below), or one of your configured custom slots (see [Custom OpenAI-compatible providers](#custom-openai-compatible-providers-lm-studio-ollama-openrouter-vllm-) below).
 - **API Keys** — separate fields for each provider. Only the key for your selected provider is required; configure additional keys to enable automatic failover.
   - Anthropic API Key (`sk-ant-...`)
   - OpenAI API Key (`sk-...`)
@@ -103,11 +103,11 @@ Open **Settings > Chief of Staff** and fill in:
 
 Default models by tier:
 
-| Tier | Anthropic | OpenAI | Gemini | Mistral | Groq |
-|---|---|---|---|---|---|
-| Mini (default) | claude-haiku-4-5 | gpt-5.4-mini | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile |
-| Power (`/power`) | claude-sonnet-4-6 | gpt-5.4 | gemini-3.5-flash | mistral-medium-latest | llama-3.3-70b-versatile |
-| Ludicrous (`/ludicrous`) | claude-opus-4-8 | gpt-5.5 | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile |
+| Tier | Anthropic | OpenAI | Gemini | Mistral | Groq | OpenAI-Codex (subscription) |
+|---|---|---|---|---|---|---|
+| Mini (default) | claude-haiku-4-5 | gpt-5.4-mini | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile | gpt-5.4-mini |
+| Power (`/power`) | claude-sonnet-4-6 | gpt-5.4 | gemini-3.5-flash | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.4 |
+| Ludicrous (`/ludicrous`) | claude-opus-4-8 | gpt-5.5 | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.5 |
 
 #### Custom OpenAI-compatible providers (LM Studio, Ollama, OpenRouter, vLLM, …)
 
@@ -135,6 +135,22 @@ In addition to the five built-in providers above, you can configure up to three 
 **CORS rules summary.** Local URLs (`http://localhost`, `127.0.0.1`, `[::1]`) always bypass the Roam CORS proxy and go direct (browser secure-context exception for loopback). Remote URLs go direct by default; if the remote service has restrictive CORS, enable "Route through proxy" on that slot. The proxy escape hatch does not work for localhost — the proxy is a Cloudflare Worker on the edge and cannot reach your machine.
 
 **Renaming caveat.** When you rename a slot's display name, Roam's settings select widget caches its displayed selection across rebuilds — close and re-open the settings panel to see the new label in the LLM Provider dropdown. The change takes effect immediately for routing; only the display lags.
+
+#### ChatGPT subscription auth (EXPERIMENTAL)
+
+Instead of an OpenAI API key, you can authenticate with your **ChatGPT Plus or Pro subscription** — GPT calls then draw on the subscription's included weekly quota rather than per-token API billing. For heavy `/ludicrous` use this can turn hundreds of dollars of monthly API spend into the flat $20/month you may already pay.
+
+**How it works.** Chief of Staff uses OpenAI's Codex device sign-in (the same flow as `codex login --device-auth` and Hermes Agent): run **command palette → Chief of Staff: Connect ChatGPT Subscription (Codex)**, a dialog shows a one-time code, open the sign-in page ([auth.openai.com/codex/device](https://auth.openai.com/codex/device)) from any device, enter the code, and approve. On success, `openai-codex` becomes your primary LLM provider automatically (change it back anytime in settings — it also stays available in the dropdown). Disconnecting restores a working provider (your first configured API key, or a custom slot). Tiers mirror the regular OpenAI lineup — mini → **gpt-5.4-mini**, power → **gpt-5.4**, ludicrous → **gpt-5.5** — so everyday queries preserve your weekly quota and only escalated requests draw on the top model. Requests stream through Roam's CORS proxy to OpenAI's Codex backend; tokens are stored in Roam Depot settings and refreshed automatically.
+
+**Read this before enabling:**
+
+- **Grey-area, best-effort.** This path uses OpenAI's own Codex sign-in but is not a documented third-party API. OpenAI could restrict or break it at any time without notice (Anthropic blocked the equivalent path for Claude subscriptions in early 2026). Treat it as a cost optimisation, not infrastructure.
+- **Weekly quota limits.** ChatGPT Plus has a weekly usage cap for Codex access; agent loops with many tool calls burn it faster than chat. When you hit the cap you'll see a clear error — wait for the weekly reset, upgrade to Pro, or switch back to an API-key provider.
+- **Keep an API key configured.** `openai-codex` is never a failover *target* — but when it fails (quota, expired auth), Chief of Staff automatically falls over TO your API-key providers, so responses keep flowing.
+- **One graph session at a time.** Refresh tokens rotate on every renewal; two Roam sessions refreshing the same credential can invalidate each other. If auth dies, run **Reconnect ChatGPT Subscription** from the command palette.
+- **Zero-cost in usage tracking.** Like custom providers, subscription calls don't count against the daily spending cap (there's no per-token price to meter).
+
+Command palette entries: **Connect ChatGPT Subscription (Codex)**, **Disconnect ChatGPT Subscription**, **Reconnect ChatGPT Subscription**. Connection status shows in settings under **ChatGPT Subscription (EXPERIMENTAL)**.
 
 #### How tiers work
 
@@ -372,6 +388,9 @@ Use this only as a recovery hatch — there's no undo, and you will need to re-e
 | **Chief of Staff: Generate Supergateway Script** | Paste your `mcpServers` JSON and get a platform-specific install script (macOS launchd / Linux systemd / Windows Task Scheduler) with auto-assigned ports. |
 | **Chief of Staff: Refresh Local MCP Servers** | Disconnects and reconnects all configured local MCP servers. |
 | **Chief of Staff: Refresh Remote MCP Servers** | Disconnects and reconnects all configured remote MCP servers. |
+| **Chief of Staff: Connect ChatGPT Subscription (Codex)** | Starts the device sign-in flow to authenticate with your ChatGPT Plus/Pro subscription instead of an OpenAI API key (see [ChatGPT subscription auth](#chatgpt-subscription-auth-experimental)). |
+| **Chief of Staff: Disconnect ChatGPT Subscription** | Clears stored subscription tokens and, if openai-codex was your primary provider, restores a working one (first configured API key or custom slot). |
+| **Chief of Staff: Reconnect ChatGPT Subscription** | Clears tokens and starts a fresh device sign-in (use after auth expiry). |
 | **Chief of Staff: Connect Remote OAuth Server** | Starts the OAuth sign-in flow for a remote MCP server configured with auth type "oauth". |
 | **Chief of Staff: Disconnect Remote OAuth Server** | Clears stored OAuth credentials and disconnects a remote server. |
 | **Chief of Staff: Review MCP Schema Changes** | Shows the schema diff for any MCP server suspended after an unexpected tool schema change, and lets you accept or keep it blocked. |

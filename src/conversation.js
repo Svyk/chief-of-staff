@@ -1018,7 +1018,7 @@ async function compactTurnsWithLlm(turns, existingSummary) {
     const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
     const outputTokens = usage.output_tokens || usage.completion_tokens || 0;
     if (deps.getModelCostRates && deps.accumulateSessionTokens && deps.recordCostEntry) {
-      const costRates = deps.getModelCostRates(model);
+      const costRates = deps.getModelCostRates(model, provider);
       const cost = (inputTokens / 1_000_000 * costRates.inputPerM) + (outputTokens / 1_000_000 * costRates.outputPerM);
       deps.recordCostEntry("compaction-" + model, inputTokens, outputTokens, cost);
       deps.accumulateSessionTokens(inputTokens, outputTokens, cost);

@@ -150,7 +150,7 @@ export async function scoreWithBinaryChecks(responseText, checks, judgeConfig) {
   const usage = response?.usage || {};
   const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
   const outputTokens = usage.output_tokens || usage.completion_tokens || 0;
-  const costRates = deps.getModelCostRates(model);
+  const costRates = deps.getModelCostRates(model, provider);
   const cost = (inputTokens / 1_000_000 * costRates.inputPerM) + (outputTokens / 1_000_000 * costRates.outputPerM);
   deps.recordCostEntry("autoresearch-judge-" + model, inputTokens, outputTokens, cost);
   deps.accumulateSessionTokens(inputTokens, outputTokens, cost);
@@ -512,7 +512,7 @@ export async function evaluateAgentRun(trace, userPrompt, responseText, options 
     const usage = response?.usage || {};
     const inputTokens = usage.input_tokens || usage.prompt_tokens || 0;
     const outputTokens = usage.output_tokens || usage.completion_tokens || 0;
-    const costRates = deps.getModelCostRates(judge.model);
+    const costRates = deps.getModelCostRates(judge.model, judge.provider);
     const evalCost = (inputTokens / 1_000_000 * costRates.inputPerM) + (outputTokens / 1_000_000 * costRates.outputPerM);
     deps.recordCostEntry("eval-" + judge.model, inputTokens, outputTokens, evalCost);
     deps.accumulateSessionTokens(inputTokens, outputTokens, evalCost);
