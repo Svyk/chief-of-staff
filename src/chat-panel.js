@@ -7,7 +7,7 @@
  */
 
 import iziToast from "izitoast";
-import { filterSlashCommands } from "./chat-commands.js";
+import { filterSlashCommands, filterFlagCommands, matchTrailingFlagToken, isKnownCommandToken, findClosestCommand } from "./chat-commands.js";
 
 // ── Dependency injection ────────────────────────────────────────────
 let deps = {};
@@ -109,6 +109,9 @@ let slashMenuEl = null;
 let slashMenuMatches = [];
 let slashMenuIndex = 0;
 let slashMenuCloseHandler = null;
+// "all" = first-position menu (every command); "flag" = mid-message menu for a
+// trailing /token — offers only inline flags, completes by replacing the token (#135).
+let slashMenuMode = "all";
 const activeToastKeyboards = new Set();
 let chatPanelPersistTimeoutId = null;
 let chatThinkingTimerId = null;
@@ -988,13 +991,17 @@ function onSlashInput() {
   refreshChatPanelElementRefs();
   const value = chatPanelInput ? chatPanelInput.value : "";
   const match = /^\/(\w*)$/.exec(value);
-  if (!match) { closeSlashMenu(); return; }
-  updateSlashMenu(match[1]);
+  if (match) { updateSlashMenu(match[1], "all"); return; }
+  // Mid-message trailing /token → flag-only menu (#135)
+  const flagMatch = matchTrailingFlagToken(value);
+  if (flagMatch) { updateSlashMenu(flagMatch.query, "flag"); return; }
+  closeSlashMenu();
 }
 
-function updateSlashMenu(query) {
+function updateSlashMenu(query, mode = "all") {
   if (!slashMenuEl) return;
-  slashMenuMatches = filterSlashCommands(query);
+  slashMenuMode = mode;
+  slashMenuMatches = mode === "flag" ? filterFlagCommands(query) : filterSlashCommands(query);
   if (slashMenuMatches.length === 0) { closeSlashMenu(); return; }
   slashMenuIndex = 0;
   renderSlashMenu();
@@ -1047,11 +1054,17 @@ function moveSlashSelection(delta) {
 
 function applySlashSelection() {
   const selected = slashMenuMatches[slashMenuIndex];
+  const mode = slashMenuMode;
   closeSlashMenu();
   if (!selected) return;
   refreshChatPanelElementRefs();
   if (!chatPanelInput) return;
-  chatPanelInput.value = `${selected.matchedName} `;
+  if (mode === "flag") {
+    // Replace just the trailing /token, leaving the message intact (#135).
+    chatPanelInput.value = chatPanelInput.value.replace(/\/\w*$/, `${selected.matchedName} `);
+  } else {
+    chatPanelInput.value = `${selected.matchedName} `;
+  }
   const end = chatPanelInput.value.length;
   chatPanelInput.setSelectionRange(end, end);
   chatPanelInput.focus();
@@ -1064,6 +1077,7 @@ function closeSlashMenu() {
   }
   slashMenuMatches = [];
   slashMenuIndex = 0;
+  slashMenuMode = "all";
   if (slashMenuCloseHandler) {
     document.removeEventListener("mousedown", slashMenuCloseHandler);
     slashMenuCloseHandler = null;
@@ -1247,6 +1261,22 @@ async function handleChatPanelSend() {
     } finally {
       setChatPanelSendingState(false);
     }
+    return;
+  }
+
+  // Unknown-command intercept: a lone "/something" that matches no command,
+  // alias, or hidden token is almost certainly a typo — answer instantly with
+  // a did-you-mean instead of spending an LLM call on it. Multi-word messages
+  // and known inline flags ("/power" alone, "summarise /power") pass through
+  // untouched.
+  const loneSlashToken = /^\/([A-Za-z][\w-]*)$/.exec(message);
+  if (loneSlashToken && !isKnownCommandToken(loneSlashToken[1])) {
+    chatPanelInput.value = "";
+    removeEmptyStateHint();
+    const suggestion = findClosestCommand(loneSlashToken[1]);
+    appendChatPanelMessage("assistant", suggestion
+      ? `I don't recognise \`/${loneSlashToken[1]}\` — did you mean \`${suggestion}\`? Type \`/\` to see all commands.`
+      : `I don't recognise \`/${loneSlashToken[1]}\`. Type \`/\` to see all commands, or \`/help\` for a summary.`);
     return;
   }
 
