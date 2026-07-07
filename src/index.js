@@ -207,7 +207,18 @@ import {
 import {
   initSettingsConfig,
   buildSettingsConfig,
+  remountSettingsPanel,
 } from "./settings-config.js";
+import {
+  initOpenAiCodexAuth,
+  startCodexDeviceConnect,
+  stopCodexAuthPolling,
+  getValidCodexToken,
+  getCodexInstructions,
+  isCodexConnected,
+  getCodexAuthStatus,
+  disconnectCodex,
+} from "./openai-codex-auth.js";
 import {
   initUsageTracking,
   getSessionTokenUsage,
@@ -3316,7 +3327,7 @@ async function runLlmCouncil(question, models, chair, context, budgetUsd) {
     const usage = response?.usage || {};
     const input = usage.input_tokens || usage.prompt_tokens || 0;
     const output = usage.output_tokens || usage.completion_tokens || 0;
-    const rates = getModelCostRates(model);
+    const rates = getModelCostRates(model, provider);
     const cost = (input / 1_000_000 * rates.inputPerM) + (output / 1_000_000 * rates.outputPerM);
     state.totalCostUsd += cost;
     state.phaseCosts[phase] += cost;
@@ -5156,6 +5167,86 @@ function buildOnboardingDeps(extensionAPI) {
   };
 }
 
+// ── ChatGPT subscription (Codex OAuth) connect flow ──────────────────────────
+// Shows the device sign-in code in a persistent centre toast while the auth
+// module polls OpenAI in the background. No popup/callback needed — the user
+// enters the code on auth.openai.com from any device.
+let codexCodeToastEl = null;
+function hideCodexCodeToast() {
+  if (codexCodeToastEl) {
+    try { iziToast.hide({}, codexCodeToastEl); } catch { /* already gone */ }
+    codexCodeToastEl = null;
+  }
+}
+
+// Disconnect + restore a usable primary provider. Without this, an explicit
+// disconnect would leave llm-provider pointing at a dead openai-codex and
+// every ask would error with "not connected".
+function disconnectCodexAndRestoreProvider(extensionAPI) {
+  disconnectCodex(extensionAPI);
+  if (getLlmProvider(extensionAPI) === "openai-codex") {
+    const fallback = VALID_LLM_PROVIDERS.find(p => getApiKeyForProvider(extensionAPI, p))
+      || listCustomProviderIds(extensionAPI)[0]
+      || DEFAULT_LLM_PROVIDER;
+    try { extensionAPI.settings.set(SETTINGS_KEYS.llmProvider, fallback); } catch { /* leave as-is */ }
+    remountSettingsPanel(extensionAPI);
+    showInfoToast("Primary provider changed", `openai-codex disconnected — primary LLM provider is now ${fallback}.`);
+  }
+}
+
+async function startCodexConnectFlow(extensionAPI) {
+  await startCodexDeviceConnect(extensionAPI, {
+    onCode: ({ userCode, verifyUrl, expiresInMinutes }) => {
+      iziToast.show({
+        class: "cos-toast cos-codex-code-toast",
+        theme: getToastTheme(),
+        title: "Connect ChatGPT Subscription",
+        message: `<div style="margin:6px 0 12px;line-height:1.5;">Open the sign-in page, sign in with the OpenAI account that has your ChatGPT subscription, and enter this one-time code:</div>`
+          + `<div style="font-family:monospace;font-size:1.6em;font-weight:700;letter-spacing:3px;margin:0 0 12px;">${escapeHtml(userCode)}</div>`
+          + `<div style="font-size:0.85em;opacity:0.75;margin:0 0 10px;line-height:1.4;">Expires in ${expiresInMinutes} minutes. Device codes are a phishing target — never share this code.</div>`,
+        position: "center",
+        timeout: false,
+        close: true,
+        overlay: true,
+        drag: false,
+        maxWidth: 440,
+        onOpening: (instance, toast) => { codexCodeToastEl = toast; },
+        buttons: [
+          [`<button style="font-weight:600;margin:2px 4px;">Open sign-in page</button>`, () => {
+            window.open(verifyUrl, "_blank", "noopener");
+          }],
+          [`<button style="margin:2px 4px;">Copy code</button>`, (instance, toast, button) => {
+            try {
+              navigator.clipboard.writeText(userCode).then(() => {
+                if (!button) return;
+                button.textContent = "Copied ✓";
+                setTimeout(() => { if (button.isConnected) button.textContent = "Copy code"; }, 1500);
+              }).catch(() => { if (button) button.textContent = "Copy failed — select the code above"; });
+            } catch { if (button) button.textContent = "Copy failed — select the code above"; }
+          }]
+        ]
+      });
+    },
+    onSuccess: (status) => {
+      hideCodexCodeToast();
+      // Completing the device sign-in is unambiguous intent — make the
+      // subscription the primary provider immediately.
+      try { extensionAPI.settings.set(SETTINGS_KEYS.llmProvider, "openai-codex"); } catch { /* keep connection even if switch fails */ }
+      showInfoToast(
+        "ChatGPT subscription connected",
+        `Connected${status?.email ? ` as ${status.email}` : ""}. openai-codex is now your primary LLM provider — change it anytime in settings.`
+      );
+      // Remount (not just rebuild): re-rendered select widgets ignore the
+      // `value` prop, so the provider dropdown only updates on a fresh mount.
+      try { remountSettingsPanel(extensionAPI); } catch { /* settings panel may not be open */ }
+    },
+    onError: (error) => {
+      hideCodexCodeToast();
+      showErrorToast("ChatGPT subscription connection failed", String(error?.message || error));
+    }
+  });
+}
+
 function registerCommandPaletteCommands(extensionAPI) {
   if (commandPaletteRegistered) return;
   if (!extensionAPI?.ui?.commandPalette?.addCommand) return;
@@ -5350,6 +5441,26 @@ function registerCommandPaletteCommands(extensionAPI) {
         }).join(", ");
         showErrorToast("Remote MCP partially failed", `Connected to ${connected}/${servers.length} server(s). Failed: ${failedUrls}. Check URLs and auth tokens, then retry.`);
       }
+    }
+  });
+  // ── ChatGPT subscription (Codex OAuth) commands ─────────────────────────────
+  extensionAPI.ui.commandPalette.addCommand({
+    label: "Chief of Staff: Connect ChatGPT Subscription (Codex)",
+    callback: () => startCodexConnectFlow(extensionAPI)
+  });
+  extensionAPI.ui.commandPalette.addCommand({
+    label: "Chief of Staff: Disconnect ChatGPT Subscription",
+    callback: () => {
+      disconnectCodexAndRestoreProvider(extensionAPI);
+      showInfoToast("ChatGPT subscription disconnected", "Stored subscription tokens cleared.");
+      try { remountSettingsPanel(extensionAPI); } catch { /* settings panel may not be open */ }
+    }
+  });
+  extensionAPI.ui.commandPalette.addCommand({
+    label: "Chief of Staff: Reconnect ChatGPT Subscription",
+    callback: () => {
+      disconnectCodex(extensionAPI);
+      startCodexConnectFlow(extensionAPI);
     }
   });
   // ── Remote OAuth commands ───────────────────────────────────────────────────
@@ -6333,6 +6444,9 @@ function onload({ extensionAPI }) {
     invalidateRemoteMcpToolsCache,
     getOAuthProviderItems: () => ["google", "github", "notion", "slack", "todoist", "linear"],
     getOAuthTokenState,
+    getCodexAuthStatus,
+    connectCodex: (ext) => startCodexConnectFlow(ext),
+    disconnectCodex: (ext) => disconnectCodexAndRestoreProvider(ext),
     getMcpOAuthStatus: (serverUrl) => {
       if (!serverUrl) return { connected: false, hasClientInfo: false, isExpired: false };
       const normalized = normalizeRemoteMcpUrl(serverUrl);
@@ -6389,11 +6503,19 @@ function onload({ extensionAPI }) {
       }
     },
   });
+  initOpenAiCodexAuth({
+    debugLog,
+    redactForLog,
+    getExtensionAPIRef: () => extensionAPIRef,
+  });
   initLlmProviders({
     debugLog,
     getSettingString,
     getSettingBool,
     getProxiedLlmUrl,
+    getValidCodexToken,
+    getCodexInstructions,
+    isCodexConnected,
     sleep,
     tryRecoverJsonArgs,
     sanitiseLlmPayloadText,
@@ -7057,10 +7179,12 @@ function onload({ extensionAPI }) {
       getSettingString(extensionAPI, SETTINGS_KEYS.mistralApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.groqApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.llmApiKey, "");
-    // A configured custom slot (LM Studio, Ollama, OpenRouter, etc.) is just
-    // as valid an "I have an LLM" signal as a built-in key.
+    // A configured custom slot (LM Studio, Ollama, OpenRouter, etc.) or a
+    // connected ChatGPT subscription is just as valid an "I have an LLM"
+    // signal as a built-in key.
     const hasCustomSlot = listCustomProviderIds(extensionAPI).length > 0;
-    if (!hasCompleted && !hasBuiltinKey && !hasCustomSlot) {
+    const hasCodexSubscription = isCodexConnected(extensionAPI);
+    if (!hasCompleted && !hasBuiltinKey && !hasCustomSlot && !hasCodexSubscription) {
       launchOnboarding(extensionAPI, buildOnboardingDeps(extensionAPI));
     }
   }, 1500);
@@ -7117,6 +7241,8 @@ function onunload() {
   cleanupLocalMcp();
   cleanupRemoteMcp();
   cancelOAuthPolling();
+  stopCodexAuthPolling();
+  hideCodexCodeToast();
   btProjectsCache = null;
   toolkitSchemaRegistryCache = null;
   clearSchemaPromptCache();

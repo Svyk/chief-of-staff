@@ -112,7 +112,7 @@ function extractUsage(response) {
 
 function trackCallCost(state, response, model, label) {
   const { inputTokens, outputTokens } = extractUsage(response);
-  const rates = deps.getModelCostRates(model);
+  const rates = deps.getModelCostRates(model, deps.getMiniProvider?.());
   const cost = (inputTokens / 1_000_000 * rates.inputPerM) + (outputTokens / 1_000_000 * rates.outputPerM);
   state.totalCostUsd += cost;
   state.totalInputTokens += inputTokens;

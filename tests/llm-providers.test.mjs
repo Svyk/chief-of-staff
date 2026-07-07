@@ -24,6 +24,9 @@ import {
   summariseModelSmokeResults,
   BUILTIN_LLM_PROVIDERS,
   VALID_LLM_PROVIDERS,
+  CODEX_PROVIDER_ID,
+  isCodexProvider,
+  callCodexResponsesStreaming,
 } from "../src/llm-providers.js";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -64,7 +67,7 @@ function makeExtensionAPI(overrides = {}) {
   };
 }
 
-function initWithExt(ext) {
+function initWithExt(ext, extraDeps = {}) {
   initLlmProviders({
     extensionAPIRef: ext,
     SETTINGS_KEYS,
@@ -90,6 +93,7 @@ function initWithExt(ext) {
     sanitiseLlmPayloadText: (s) => s,
     sanitiseLlmMessages: (m) => m,
     tryRecoverJsonArgs: () => ({}),
+    ...extraDeps,
   });
   return ext;
 }
@@ -557,4 +561,168 @@ test("summariseModelSmokeResults reports invalid models for settings UI", () => 
   assert.match(summary, /1 OK/);
   assert.match(summary, /1 invalid/);
   assert.match(summary, /gemini\/power bad/);
+});
+
+// ── ChatGPT subscription (openai-codex) provider ─────────────────────────────
+
+const codexDeps = (connected) => ({
+  isCodexConnected: () => connected,
+  getValidCodexToken: async () => ({ accessToken: "sub_at", accountId: "acct_7" }),
+  getCodexInstructions: async () => "OFFICIAL CODEX PROMPT",
+  LLM_STREAM_CHUNK_TIMEOUT_MS: 60_000,
+});
+
+test("isCodexProvider detects the codex id only", () => {
+  assert.equal(isCodexProvider(CODEX_PROVIDER_ID), true);
+  assert.equal(isCodexProvider("openai"), false);
+  assert.equal(isCodexProvider("custom-1"), false);
+  assert.equal(isCodexProvider(null), false);
+});
+
+test("codex is NOT in BUILTIN_LLM_PROVIDERS or failover chains", () => {
+  assert.equal(BUILTIN_LLM_PROVIDERS.includes(CODEX_PROVIDER_ID), false);
+  const ext = initWithExt(makeExtensionAPI(), codexDeps(true));
+  for (const tier of ["mini", "power", "ludicrous"]) {
+    assert.equal(buildEffectiveFailoverChain(ext, tier).includes(CODEX_PROVIDER_ID), false);
+  }
+});
+
+test("getApiKeyForProvider returns placeholder when connected, empty when not", () => {
+  const ext = initWithExt(makeExtensionAPI(), codexDeps(true));
+  assert.equal(getApiKeyForProvider(ext, CODEX_PROVIDER_ID), "chatgpt-subscription");
+  initWithExt(ext, codexDeps(false));
+  assert.equal(getApiKeyForProvider(ext, CODEX_PROVIDER_ID), "");
+});
+
+test("getValidProviders includes codex only when connected", () => {
+  const ext = initWithExt(makeExtensionAPI(), codexDeps(true));
+  assert.ok(getValidProviders(ext).includes(CODEX_PROVIDER_ID));
+  initWithExt(ext, codexDeps(false));
+  assert.equal(getValidProviders(ext).includes(CODEX_PROVIDER_ID), false);
+});
+
+test("getLlmProvider round-trips a saved openai-codex selection even when disconnected", () => {
+  const ext = initWithExt(makeExtensionAPI({ "llm-provider": "openai-codex" }), codexDeps(false));
+  assert.equal(getLlmProvider(ext), "openai-codex");
+});
+
+test("codex is zero-cost and OpenAI-compatible; tiers mirror the openai API lineup", () => {
+  const ext = initWithExt(makeExtensionAPI(), codexDeps(true));
+  assert.deepEqual(getModelCostRates("gpt-5.5", CODEX_PROVIDER_ID), { inputPerM: 0, outputPerM: 0 });
+  assert.equal(isOpenAICompatible(CODEX_PROVIDER_ID), true);
+  assert.equal(getLlmModel(ext, CODEX_PROVIDER_ID), "gpt-5.4-mini");
+  assert.equal(getPowerModel(ext, CODEX_PROVIDER_ID), "gpt-5.4");
+  assert.equal(getLudicrousModel(ext, CODEX_PROVIDER_ID), "gpt-5.5");
+});
+
+test("failover works FROM codex to keyed providers; codex is never a failover TARGET", () => {
+  const ext = initWithExt(
+    makeExtensionAPI({ "openai-api-key": "sk-x", "gemini-api-key": "g-x" }),
+    codexDeps(true)
+  );
+  const fromCodex = getFailoverProviders(CODEX_PROVIDER_ID, ext, "mini");
+  assert.deepEqual(fromCodex, ["gemini", "openai"]); // chain order, keyed only
+  const fromGemini = getFailoverProviders("gemini", ext, "mini");
+  assert.equal(fromGemini.includes(CODEX_PROVIDER_ID), false);
+});
+
+function sseResponse(events) {
+  const text = events.map((e) => `data: ${JSON.stringify(e)}\n`).join("\n") + "\n";
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    }),
+  };
+}
+
+test("callCodexResponsesStreaming: headers, streamed text, tool call, mapped usage", async (t) => {
+  const ext = initWithExt(makeExtensionAPI(), codexDeps(true));
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, opts) => {
+    captured = { url: String(url), opts };
+    return sseResponse([
+      { type: "response.output_text.delta", delta: "Hello " },
+      { type: "response.output_text.delta", delta: "world" },
+      { type: "response.output_item.done", item: { type: "function_call", call_id: "c1", name: "roam_search", arguments: "{\"query\":\"x\"}" } },
+      { type: "response.completed", response: { usage: { input_tokens: 42, output_tokens: 7 } } },
+    ]);
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const chunks = [];
+  const result = await callCodexResponsesStreaming(
+    "gpt-5.5", "system prompt", [{ role: "user", content: "hi" }],
+    [{ name: "roam_search", description: "d", input_schema: { type: "object" } }],
+    (d) => chunks.push(d)
+  );
+
+  assert.match(captured.url, /^https:\/\/proxy\.example\/https:\/\/chatgpt\.com\/backend-api\/codex\/responses$/);
+  assert.equal(captured.opts.headers.Authorization, "Bearer sub_at");
+  assert.equal(captured.opts.headers["chatgpt-account-id"], "acct_7");
+  assert.equal(captured.opts.headers["OpenAI-Beta"], "responses=experimental");
+  assert.equal(captured.opts.headers.originator, "codex_cli_rs");
+  const body = JSON.parse(captured.opts.body);
+  assert.equal(body.instructions, "OFFICIAL CODEX PROMPT"); // codex backend rejects arbitrary instructions
+  assert.equal(body.input[0].role, "developer");
+  assert.equal(body.input[0].content[0].text, "system prompt"); // host system prompt rides in input
+  assert.equal(body.store, false);
+  assert.equal(body.max_output_tokens, undefined); // unsupported by codex backend
+  assert.deepEqual(body.include, ["reasoning.encrypted_content"]);
+  assert.equal(body.tools[0].name, "roam_search"); // flat, not nested
+
+  assert.equal(result.textContent, "Hello world");
+  assert.deepEqual(chunks, ["Hello ", "world"]);
+  assert.deepEqual(result.toolCalls, [{ id: "c1", name: "roam_search", arguments: { query: "x" } }]);
+  assert.deepEqual(result.usage, { prompt_tokens: 42, completion_tokens: 7, total_tokens: 49 });
+});
+
+test("callCodexResponsesStreaming: 429 surfaces the weekly-cap message", async (t) => {
+  initWithExt(makeExtensionAPI(), codexDeps(true));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false, status: 429,
+    headers: { get: (h) => (h === "retry-after" ? "3600" : null) },
+    text: async () => "quota exceeded",
+  });
+  t.after(() => { globalThis.fetch = originalFetch; });
+  await assert.rejects(
+    callCodexResponsesStreaming("gpt-5.5", "s", [], [], null),
+    /weekly usage cap.*not an API rate limit/s
+  );
+});
+
+test("callCodexResponsesStreaming: dead/missing token error surfaces before any fetch", async (t) => {
+  initWithExt(makeExtensionAPI(), {
+    ...codexDeps(true),
+    getValidCodexToken: async () => { throw new Error("ChatGPT subscription auth expired (HTTP 400). Reconnect via command palette."); },
+  });
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => { fetchCount++; return {}; };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  await assert.rejects(callCodexResponsesStreaming("gpt-5.5", "s", [], [], null), /expired.*Reconnect/s);
+  assert.equal(fetchCount, 0);
+});
+
+test("callLlm wraps codex streaming into chat-completions response shape", async (t) => {
+  initWithExt(makeExtensionAPI(), codexDeps(true));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => sseResponse([
+    { type: "response.output_text.delta", delta: "answer" },
+    { type: "response.output_item.done", item: { type: "function_call", call_id: "c2", name: "t", arguments: "{}" } },
+    { type: "response.completed", response: { usage: { input_tokens: 1, output_tokens: 2 } } },
+  ]);
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const { callLlm } = await import("../src/llm-providers.js");
+  const res = await callLlm(CODEX_PROVIDER_ID, "ignored", "gpt-5.5", "s", [], []);
+  assert.equal(res.choices[0].message.content, "answer");
+  assert.equal(res.choices[0].message.tool_calls[0].function.name, "t");
+  assert.equal(res.usage.prompt_tokens, 1);
 });

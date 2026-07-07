@@ -15,6 +15,11 @@ import {
   POWER_LLM_MODELS,
   LUDICROUS_LLM_MODELS
 } from "./aibom-config.js";
+import {
+  buildCodexResponsesRequest,
+  createCodexStreamState,
+  reduceCodexSseEvent
+} from "./codex-responses.js";
 
 // ── DI container ─────────────────────────────────────────────────────────────
 let deps = {};
@@ -50,6 +55,18 @@ export function isLocalhostUrl(url) {
 
 export function isCustomProvider(provider) {
   return typeof provider === "string" && provider.startsWith("custom-");
+}
+
+// ChatGPT-subscription provider (EXPERIMENTAL): authenticates via OpenAI's
+// Codex device-code OAuth instead of an API key and calls the Responses API
+// endpoint on chatgpt.com. Deliberately NOT in BUILTIN_LLM_PROVIDERS (the
+// autoresearch judge selects built-ins only) and NOT in any failover chain —
+// it only runs when the user explicitly selects it as primary; when it fails,
+// normal API-key providers take over.
+export const CODEX_PROVIDER_ID = "openai-codex";
+
+export function isCodexProvider(provider) {
+  return provider === CODEX_PROVIDER_ID;
 }
 
 export function listCustomProviderIds(extensionAPI) {
@@ -98,7 +115,8 @@ export function shouldOmitToolsForProvider(provider) {
 }
 
 export function getValidProviders(extensionAPI) {
-  return [...BUILTIN_LLM_PROVIDERS, ...listCustomProviderIds(extensionAPI)];
+  const codex = deps.isCodexConnected?.(extensionAPI) ? [CODEX_PROVIDER_ID] : [];
+  return [...BUILTIN_LLM_PROVIDERS, ...codex, ...listCustomProviderIds(extensionAPI)];
 }
 
 // Resolves the OpenAI-format chat completions endpoint for a given provider.
@@ -131,7 +149,7 @@ export function buildEffectiveFailoverChain(extensionAPI, tier) {
 
 export function isOpenAICompatible(provider) {
   return provider === "openai" || provider === "gemini" || provider === "mistral" || provider === "groq"
-    || isCustomProvider(provider);
+    || isCodexProvider(provider) || isCustomProvider(provider);
 }
 
 export function getLlmProvider(extensionAPI) {
@@ -141,6 +159,10 @@ export function getLlmProvider(extensionAPI) {
   const slotMatch = stored.match(/^(custom-\d+)\b/i);
   const raw = slotMatch ? slotMatch[1].toLowerCase() : stored.toLowerCase();
   if (BUILTIN_LLM_PROVIDERS.includes(raw)) return raw;
+  // Accept a saved codex selection even when disconnected — the call path
+  // throws a clear "not connected / reconnect" error, which beats a silent
+  // fallback to a different provider.
+  if (isCodexProvider(raw)) return raw;
   if (isCustomProvider(raw) && getCustomProviderConfig(extensionAPI, raw)) return raw;
   // Saved primary may have been a custom slot the user later removed.
   if (isCustomProvider(raw)) {
@@ -165,6 +187,13 @@ export function sanitizeHeaderValue(value) {
 }
 
 export function getApiKeyForProvider(extensionAPI, provider) {
+  // Subscription auth has no static key — the real Bearer token is resolved
+  // asynchronously inside callCodexResponsesStreaming. This placeholder
+  // satisfies the ~15 truthiness gates that treat "has a key" as "usable"
+  // (same convention as the custom-provider "lm-studio-no-auth" value).
+  if (isCodexProvider(provider)) {
+    return deps.isCodexConnected?.(extensionAPI) ? "chatgpt-subscription" : "";
+  }
   if (isCustomProvider(provider)) {
     const cfg = getCustomProviderConfig(extensionAPI, provider);
     // OpenAI client convention requires a non-empty Bearer header value;
@@ -258,7 +287,7 @@ export function getModelCostRates(model, provider) {
   // Custom providers (LM Studio, Ollama, OpenAI-compatible servers) are
   // zero-cost by default. Avoids the mid-range fallback below silently
   // billing local models against the user's daily spending cap.
-  if (isCustomProvider(provider)) return { inputPerM: 0, outputPerM: 0 };
+  if (isCustomProvider(provider) || isCodexProvider(provider)) return { inputPerM: 0, outputPerM: 0 };
   const rates = deps.LLM_MODEL_COSTS[model];
   if (rates) return { inputPerM: rates[0], outputPerM: rates[1] };
   // Fallback: assume mid-range pricing
@@ -700,6 +729,10 @@ export async function callOpenAI(apiKey, model, system, messages, tools, options
  * returned at the end. Falls back to non-streaming on error.
  */
 export async function callOpenAIStreaming(apiKey, model, system, messages, tools, onTextChunk, options = {}, provider = "openai") {
+  // ChatGPT-subscription provider speaks the Responses API, not chat completions
+  if (isCodexProvider(provider)) {
+    return callCodexResponsesStreaming(model, system, messages, tools, onTextChunk, options);
+  }
   // DD-2: Scrub PII from content sent to external LLM APIs
   // Pass tools so email addresses are preserved when email/calendar tools are active
   const skipEmail = shouldSkipEmailScrub(tools);
@@ -917,7 +950,162 @@ export async function callOpenAIStreaming(apiKey, model, system, messages, tools
   return { textContent, toolCalls, usage };
 }
 
+/**
+ * Streaming call to the ChatGPT-subscription (Codex) Responses API endpoint.
+ * EXPERIMENTAL. The Bearer token is resolved here (not from settings) via the
+ * device-code OAuth module, refreshing when expired. Requests route through
+ * the Roam CORS proxy — chatgpt.com does not allow cross-origin browser calls.
+ * Returns the same { textContent, toolCalls, usage } shape as
+ * callOpenAIStreaming so the agent loop is unchanged.
+ */
+export async function callCodexResponsesStreaming(model, system, messages, tools, onTextChunk, options = {}) {
+  // DD-2: Scrub PII from content sent to external LLM APIs
+  const skipEmail = shouldSkipEmailScrub(tools);
+  const scrubbedSystem = isPiiScrubEnabled() ? scrubPiiFromText(system, { skipEmail }) : system;
+  const scrubbedMessages = isPiiScrubEnabled() ? scrubPiiFromMessages(messages, { tools }) : messages;
+  // DD-2b: Strip known LLM control strings before sending to provider
+  const safeSystem = deps.sanitiseLlmPayloadText(scrubbedSystem);
+  const safeMessages = deps.sanitiseLlmMessages(scrubbedMessages);
+
+  const { accessToken, accountId } = await deps.getValidCodexToken();
+  const codexInstructions = await deps.getCodexInstructions(model);
+
+  const requestBody = buildCodexResponsesRequest({
+    model,
+    system: safeSystem,
+    messages: safeMessages,
+    tools,
+    sanitiseSchema: sanitiseToolSchema,
+    codexInstructions
+  });
+
+  // Clearable connect timeout — same pattern as callOpenAIStreaming
+  const connectAbort = new AbortController();
+  const connectTimeoutId = setTimeout(
+    () => connectAbort.abort(new Error("Streaming connect timeout")),
+    deps.LLM_RESPONSE_TIMEOUT_MS
+  );
+  const streamFetchSignal = options.signal
+    ? AbortSignal.any([options.signal, connectAbort.signal])
+    : connectAbort.signal;
+
+  let response;
+  try {
+    response = await fetch(deps.getProxiedLlmUrl(LLM_API_ENDPOINTS[CODEX_PROVIDER_ID]), {
+      signal: streamFetchSignal,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sanitizeHeaderValue(accessToken)}`,
+        "chatgpt-account-id": sanitizeHeaderValue(accountId),
+        "OpenAI-Beta": "responses=experimental",
+        originator: "codex_cli_rs",
+        accept: "text/event-stream"
+      },
+      body: JSON.stringify(requestBody)
+    });
+  } finally {
+    clearTimeout(connectTimeoutId);
+  }
+
+  if (!response.ok) {
+    const errorText = (await response.text()).slice(0, 800);
+    deps.debugLog("[Chief flow] openai-codex error", response.status, "body:", errorText);
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `openai-codex auth error ${response.status}: ChatGPT subscription token was rejected. `
+        + `Reconnect via command palette: Chief of Staff: Reconnect ChatGPT Subscription. Original error: ${errorText}`
+      );
+    }
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("retry-after");
+      const retryHint = retryAfter ? ` Retry-After: ${retryAfter}s.` : "";
+      throw new Error(
+        `openai-codex rate limit (HTTP 429).${retryHint} This is your ChatGPT plan's weekly usage cap, not an API rate limit — `
+        + `wait for the weekly reset, upgrade the ChatGPT plan, or switch to an API-key provider. Original error: ${errorText}`
+      );
+    }
+    throw new Error(`openai-codex streaming error ${response.status}: ${errorText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const state = createCodexStreamState();
+
+  const streamStartMs = Date.now();
+  const STREAM_TOTAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 min hard cap on total stream duration
+  try {
+    while (true) {
+      if (Date.now() - streamStartMs > STREAM_TOTAL_TIMEOUT_MS) {
+        throw new Error("openai-codex streaming total timeout (5 min)");
+      }
+      let chunkTimeoutId;
+      const chunkTimeout = new Promise((_, reject) => {
+        chunkTimeoutId = setTimeout(() => reject(new Error("openai-codex streaming chunk timeout")), deps.LLM_STREAM_CHUNK_TIMEOUT_MS);
+      });
+      let done, value;
+      try {
+        ({ done, value } = await Promise.race([reader.read(), chunkTimeout]));
+      } finally {
+        clearTimeout(chunkTimeoutId);
+      }
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // keep incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === "data: [DONE]") continue;
+        // Responses SSE payloads carry a `type` field, so `event:` lines are redundant
+        if (!trimmed.startsWith("data: ")) continue;
+        let parsed;
+        try { parsed = JSON.parse(trimmed.slice(6)); } catch { continue; }
+        reduceCodexSseEvent(state, parsed, { onTextChunk });
+      }
+    }
+  } finally {
+    try { reader.cancel(); } catch { /* ignore */ }
+  }
+
+  if (state.error) {
+    throw new Error(`openai-codex response error: ${state.error}`);
+  }
+
+  const toolCalls = state.toolCalls
+    .filter((tc) => tc.name)
+    .map((tc) => {
+      let args = {};
+      try { args = JSON.parse(tc.arguments); } catch (e) {
+        deps.debugLog("[Chief flow] Codex tool argument JSON parse failed:", tc.name, e?.message);
+        const toolDef = Array.isArray(tools) ? tools.find(t => (t.function?.name || t.name) === tc.name) : null;
+        const schema = toolDef?.function?.parameters || toolDef?.input_schema || null;
+        args = deps.tryRecoverJsonArgs(tc.arguments, tc.name, schema);
+      }
+      return { id: tc.id, name: tc.name, arguments: args };
+    });
+
+  return { textContent: state.textContent, toolCalls, usage: state.usage };
+}
+
 export async function callLlm(provider, apiKey, model, system, messages, tools, options = {}) {
+  // Codex has no non-streaming endpoint — stream internally (no chunk callback)
+  // and wrap the result into chat-completions response shape so non-streaming
+  // consumers (intent classifier, eval judge, compaction) work unmodified.
+  if (isCodexProvider(provider)) {
+    const { textContent, toolCalls, usage } = await callCodexResponsesStreaming(model, system, messages, tools, null, options);
+    const message = { role: "assistant", content: textContent || null };
+    if (toolCalls.length) {
+      message.tool_calls = toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) }
+      }));
+    }
+    return { choices: [{ message }], usage };
+  }
   // DD-2: Scrub PII from content sent to external LLM APIs
   // Pass tools so email addresses are preserved when email/calendar tools are active
   const skipEmail = shouldSkipEmailScrub(tools);
