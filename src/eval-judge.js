@@ -443,21 +443,25 @@ async function persistReviewQueueEntry(trace, scores, userPrompt, options = {}) 
  * @returns {Promise<{scores: object, concern: string, queued: boolean}|null>}
  */
 export async function evaluateAgentRun(trace, userPrompt, responseText, options = {}) {
-  const { skillName = null, rubricChecks = null } = options;
+  const { skillName = null, rubricChecks = null, force = false } = options;
   try {
     if (!trace || !trace.startedAt) return null;
 
-    // Check if eval is enabled
     const extensionAPI = deps.getExtensionAPIRef();
     if (!extensionAPI) return null;
-    const enabled = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.evalEnabled, false);
-    if (!enabled) return null;
 
-    // Apply sampling rate
-    const sampleRateStr = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.evalSampleRate, "1.0");
-    const sampleRate = parseFloat(sampleRateStr);
-    if (isNaN(sampleRate) || sampleRate <= 0) return null;
-    if (sampleRate < 1.0 && Math.random() >= sampleRate) return null;
+    // /verify (#134) passes force: true — on-demand evaluation runs even when
+    // the background eval toggle is off, and never gets sampled away.
+    if (!force) {
+      const enabled = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.evalEnabled, false);
+      if (!enabled) return null;
+
+      // Apply sampling rate
+      const sampleRateStr = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.evalSampleRate, "1.0");
+      const sampleRate = parseFloat(sampleRateStr);
+      if (isNaN(sampleRate) || sampleRate <= 0) return null;
+      if (sampleRate < 1.0 && Math.random() >= sampleRate) return null;
+    }
 
     // Select judge provider (different from run provider when possible)
     const judge = selectJudgeProvider(trace.provider);
