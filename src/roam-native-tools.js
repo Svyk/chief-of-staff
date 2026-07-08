@@ -80,6 +80,8 @@ export function getRoamNativeTools() {
     "Chief of Staff/Usage Stats",
     "Chief of Staff/Corrections",
     "Chief of Staff/Synthesis",
+    "Chief of Staff/Review Queue",
+    "Chief of Staff/Eval Log",
   ]);
 
   // Cap a result's text so a handful of huge blocks (5KB+ embedded JSON, code)
