@@ -9,6 +9,7 @@ https://www.loom.com/share/9aa3c07de0f147af971d2fc54fe65e4a
 ## What it does
 
 - **Ask anything** via the command palette or a persistent floating chat panel. The assistant can read your graph, create blocks, and call external tools — with your approval before any write operation. Common queries (task searches, memory saves, tool lists) are handled instantly without an LLM call.
+- **Graph search — exact and semantic** — search uses Roam's native ranked engine: page-title matches rank above block matches, and results include page context. If your graph has **semantic search** enabled (requires embeddings enabled in Roam's settings and a signed-in user), the assistant can also search by *meaning* — "what have I written that relates to burnout?" surfaces compassion-fatigue and change-fatigue notes even when the word "burnout" never appears. Conceptual phrasing like `find my notes about racquet sports` routes to semantic search automatically; when semantic search isn't available it falls back to exact-text search and tells you so.
 - **Multi-provider LLM support** — choose from Anthropic Claude, OpenAI GPT, Google Gemini, Mistral, Groq, or up to three **custom OpenAI-compatible endpoints** (LM Studio, Ollama, OpenRouter, vLLM, self-hosted, etc.) as your primary provider. If one provider is unavailable, the assistant automatically fails over to the next available provider in the chain. Custom local slots support a privacy mode that disables fallback to cloud providers — failed requests surface as errors instead of silently routing to a remote API.
 - **Better Tasks integration** — search, create, and modify Better Tasks (TODO/DONE parent blocks with `BT_attr*` attribute children) directly from natural language. Supports filtering by due date, project, status, and free text.
 - **Persistent memory** — loads context from dedicated memory pages into the system prompt each run (see [Memory and learning](#memory-and-learning)).
@@ -458,8 +459,9 @@ Many common tasks are handled by a **deterministic router** that matches your in
 
 | You type | What happens |
 |---|---|
-| `search project planning` | Full-text search across your graph |
+| `search project planning` | Exact-text search across page titles and blocks, ranked by relevance |
 | `find meeting notes` | Same — `find`, `look up`, `search for` all work |
+| `find my notes about racquet sports` | Semantic (meaning-based) search — finds conceptually related notes even when the exact words don't appear. Requires semantic search enabled on your graph; falls back to exact-text search otherwise |
 | `show me [[Project Plan]]` | Returns the page contents (top 4 levels, 3K chars) |
 | `what's on [[Weekly Review]]` | Same — `read`, `get`, `contents of` |
 | `what's on today's page` | Shows today's daily page content |
