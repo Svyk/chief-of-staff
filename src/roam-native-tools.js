@@ -1,4 +1,4 @@
-// roam-native-tools.js — 48 Roam tool definitions, extracted from index.js
+// roam-native-tools.js — 49 Roam tool definitions, extracted from index.js
 // All external dependencies are injected via initRoamNativeTools().
 // Tools are split into "core" (always in the LLM tool list) and "routed"
 // (discovered via ROAM_ROUTE, executed via ROAM_EXECUTE) to stay under
@@ -10,7 +10,7 @@ let roamNativeToolsCache = null;
 // Core tools stay as direct, first-class tools in every LLM call.
 // Everything else is behind ROAM_ROUTE → ROAM_EXECUTE two-stage routing.
 export const ROAM_CORE_TOOLS = new Set([
-  "roam_search", "roam_create_block", "roam_update_block",
+  "roam_search", "roam_semantic_search", "roam_create_block", "roam_update_block",
   "roam_get_page", "roam_get_block_children", "roam_get_daily_page",
   "roam_open_page", "roam_delete_block", "roam_create_blocks",
   "roam_create_page", "roam_web_fetch"
@@ -66,11 +66,159 @@ export function getRoamNativeTools() {
     return { success: true, message: successMessage };
   }
 
+  // ── Search helpers (shared by roam_search and roam_semantic_search) ────────
+
+  const SEARCH_SNIPPET_MAX_CHARS = 400;
+
+  // Machine-generated COS log pages — their entries echo past prompts/runs, so
+  // an agent searching "racquet sports" finds its own audit trail. Excluded
+  // from both search tools.
+  const SEARCH_EXCLUDED_PAGES = new Set(["Chief of Staff/Audit Log", "Chief of Staff/Usage Stats"]);
+
+  // Cap a result's text so a handful of huge blocks (5KB+ embedded JSON, code)
+  // can't blow the tool-result char budget. Windows around the first match
+  // when the match sits past the cap. Snippets are flattened to a single line
+  // with code fences stripped — a truncated ``` fence left unclosed would
+  // swallow the rest of the chat message into one code block.
+  function truncateMatchSnippet(text, queryText, maxLen = SEARCH_SNIPPET_MAX_CHARS) {
+    const str = String(text || "").replace(/```/g, "").replace(/\s+/g, " ").trim();
+    if (str.length <= maxLen) return str;
+    const q = String(queryText || "").toLowerCase();
+    const idx = str.toLowerCase().indexOf(q);
+    if (idx < 0 || idx + q.length <= maxLen) {
+      // Head slice, trimmed to a word boundary (unless that would drop the match).
+      const head = str.slice(0, maxLen);
+      const trimmed = head.replace(/\s+\S*$/, "");
+      return (idx < 0 || trimmed.length >= idx + q.length ? trimmed : head) + " …";
+    }
+    const start = Math.max(0, idx - Math.floor(maxLen / 2));
+    const end = Math.min(str.length, start + maxLen);
+    let slice = str.slice(start, end);
+    if (start > 0) slice = slice.replace(/^\S*\s+/, "");
+    if (end < str.length && !slice.toLowerCase().endsWith(q)) slice = slice.replace(/\s+\S*$/, "");
+    return (start > 0 ? "… " : "") + slice + (end < str.length ? " …" : "");
+  }
+
+  // Hydrate uids → Map(uid → { text, title, page }) in a single pull_many.
+  // Pull results use Clojure-style string keys (":block/string"). Best-effort:
+  // never throws; missing entries are simply absent from the map.
+  async function pullSearchRecords(api, uids) {
+    const map = new Map();
+    const unique = [...new Set(uids)].filter(Boolean);
+    if (!unique.length) return map;
+    const pattern = "[:block/uid :block/string :node/title {:block/page [:node/title]}]";
+    const eids = unique.map(u => [":block/uid", u]);
+    try {
+      let pulled;
+      if (typeof api?.data?.pull_many === "function") pulled = await api.data.pull_many(pattern, eids);
+      else if (typeof api?.pull_many === "function") pulled = await api.pull_many(pattern, eids);
+      for (const rec of Array.isArray(pulled) ? pulled : []) {
+        const uid = rec?.[":block/uid"];
+        if (!uid) continue;
+        map.set(uid, {
+          text: rec[":block/string"],
+          title: rec[":node/title"],
+          page: rec[":block/page"]?.[":node/title"]
+        });
+      }
+    } catch (error) {
+      deps.debugLog?.("[Chief flow] pull_many hydration failed:", error?.message);
+    }
+    return map;
+  }
+
+  async function runLexicalRoamSearch({ query, max_results = 20 } = {}) {
+    const api = deps.getRoamAlphaApi();
+    const rawQuery = String(query || "").trim();
+    const queryText = rawQuery.toLowerCase();
+    if (!queryText) return [];
+    const limit = Number.isFinite(max_results) ? Math.max(1, Math.min(500, max_results)) : 20;
+
+    // Preferred backend: Roam's native ranked search (data.async.search) —
+    // covers page titles, ranks by relevance (exact title → title substring →
+    // block substring), and uses the server-side engine when the graph has it
+    // enabled. Results use Clojure-style string keys.
+    if (typeof api?.data?.async?.search === "function") {
+      try {
+        const raw = await api.data.async.search({ "search-str": rawQuery });
+        const all = (Array.isArray(raw) ? raw : []).filter(r => r?.[":block/uid"]);
+        // Over-fetch a buffer so filtering out COS log pages can't starve the cap.
+        const pool = all.slice(0, limit + 25);
+        // The default pull omits a block's parent page — hydrate in one pull_many.
+        const blockUids = pool.filter(r => r[":block/string"] != null).map(r => r[":block/uid"]);
+        const records = await pullSearchRecords(api, blockUids);
+        const shaped = pool.map(r => {
+          const uid = r[":block/uid"];
+          if (r[":node/title"] != null && r[":block/string"] == null) {
+            return { uid, type: "page", page: r[":node/title"] };
+          }
+          return {
+            uid,
+            text: truncateMatchSnippet(r[":block/string"], rawQuery),
+            page: records.get(uid)?.page || null
+          };
+        }).filter(r => !SEARCH_EXCLUDED_PAGES.has(r.page));
+        const total = all.length - (pool.length - shaped.length);
+        const capped = shaped.slice(0, limit);
+        if (total > capped.length) {
+          capped.push({ _note: `Showing ${capped.length} of ${total} matches. Increase max_results (up to 500) to see more.` });
+        } else if (capped.length === 0) {
+          capped.push({ _note: `No matches found for "${rawQuery.slice(0, 80)}". Try a different or broader query.` });
+        }
+        return capped;
+      } catch (error) {
+        console.warn("[Chief of Staff] data.async.search failed; falling back to Datalog scan.", error?.message);
+      }
+    }
+
+    // Fallback for older Roam clients: Datalog substring scan over block text.
+    const escapedQuery = deps.escapeForDatalog(queryText);
+    const hardCap = Math.max(200, limit);
+    // NOTE: clojure.string/lower-case is broken in Roam's Datascript engine
+    // (returns empty results) and re-find #"..." reader syntax is unsupported.
+    // Strategy: query with multiple case variants via (or ...) clause,
+    // then filter case-insensitively in JS as a safety net.
+    const originalCase = deps.escapeForDatalog(rawQuery);
+    const lowerCase = escapedQuery; // already lowercase + escaped
+    const titleCase = deps.escapeForDatalog(rawQuery.replace(/\b\w/g, c => c.toUpperCase()));
+    // Build (or ...) clause with distinct case variants
+    const variants = [...new Set([originalCase, lowerCase, titleCase])];
+    const orClauses = variants.map(v => `[(clojure.string/includes? ?str "${v}")]`).join("\n            ");
+    const baseQuery = `[:find ?uid ?str ?page-title
+          :where
+          [?b :block/string ?str]
+          [?b :block/uid ?uid]
+          [?b :block/page ?p]
+          [?p :node/title ?page-title]
+          (or
+            ${orClauses})]`;
+    let results;
+    try {
+      results = await deps.queryRoamDatalog(`${baseQuery.slice(0, -1)}
+          :limit ${hardCap}]`);
+    } catch (error) {
+      console.warn("[Chief of Staff] Roam :limit unsupported; running unbounded roam_search scan.");
+      results = await deps.queryRoamDatalog(baseQuery, api);
+    }
+    // Final case-insensitive filter in JS (catches any case the variants missed)
+    const allResults = Array.isArray(results) ? results : [];
+    const filtered = allResults
+      .filter(([, text]) => text && text.toLowerCase().includes(queryText))
+      .filter(([, , page]) => !SEARCH_EXCLUDED_PAGES.has(page));
+    const capped = filtered.slice(0, limit).map(([uid, text, page]) => ({ uid, text: truncateMatchSnippet(text, rawQuery), page }));
+    if (filtered.length > limit) {
+      capped.push({ _note: `Showing ${limit} of ${filtered.length} matches. Increase max_results (up to 500) to see more.` });
+    } else if (capped.length === 0) {
+      capped.push({ _note: `No matches found for "${rawQuery.slice(0, 80)}". Try a different or broader query.` });
+    }
+    return capped;
+  }
+
   roamNativeToolsCache = [
     {
       name: "roam_search",
       isMutating: false,
-      description: "Search Roam block text content and return matching blocks with page context.",
+      description: "Exact-text search across Roam page titles and block content. Returns relevance-ranked matches with page context.",
       input_schema: {
         type: "object",
         properties: {
@@ -79,51 +227,79 @@ export function getRoamNativeTools() {
         },
         required: ["query"]
       },
+      execute: runLexicalRoamSearch
+    },
+    {
+      name: "roam_semantic_search",
+      isMutating: false,
+      description: "Meaning-based (semantic) search across the graph — finds pages and blocks conceptually related to the query even when its exact words don't appear in the notes. Use for vague or conceptual queries; prefer roam_search when the user gives exact terms or known phrases. Falls back to exact-text search when semantic search isn't enabled on this graph.",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language description of the concept to find." },
+          max_results: { type: "number", description: "Maximum matches to return. Default 20." }
+        },
+        required: ["query"]
+      },
       execute: async ({ query, max_results = 20 } = {}) => {
         const api = deps.getRoamAlphaApi();
-        const queryText = String(query || "").trim().toLowerCase();
-        if (!queryText) return [];
-        const escapedQuery = deps.escapeForDatalog(queryText);
-        const limit = Number.isFinite(max_results) ? Math.max(1, Math.min(500, max_results)) : 20;
-        const hardCap = Math.max(200, limit);
-        // NOTE: clojure.string/lower-case is broken in Roam's Datascript engine
-        // (returns empty results) and re-find #"..." reader syntax is unsupported.
-        // Strategy: query with multiple case variants via (or ...) clause,
-        // then filter case-insensitively in JS as a safety net.
-        const originalCase = deps.escapeForDatalog(String(query || "").trim());
-        const lowerCase = escapedQuery; // already lowercase + escaped
-        const titleCase = deps.escapeForDatalog(
-          String(query || "").trim().replace(/\b\w/g, c => c.toUpperCase())
-        );
-        // Build (or ...) clause with distinct case variants
-        const variants = [...new Set([originalCase, lowerCase, titleCase])];
-        const orClauses = variants.map(v => `[(clojure.string/includes? ?str "${v}")]`).join("\n            ");
-        const baseQuery = `[:find ?uid ?str ?page-title
-          :where
-          [?b :block/string ?str]
-          [?b :block/uid ?uid]
-          [?b :block/page ?p]
-          [?p :node/title ?page-title]
-          (or
-            ${orClauses})]`;
-        let results;
+        const rawQuery = String(query || "").trim();
+        if (!rawQuery) return [];
+        const limit = Number.isFinite(max_results) ? Math.max(1, Math.min(100, max_results)) : 20;
+
+        const fallbackToLexical = async (reason) => {
+          const results = await runLexicalRoamSearch({ query: rawQuery, max_results: limit });
+          results.unshift({ _note: reason });
+          return results;
+        };
+
+        let enabled = false;
+        try { enabled = api?.data?.semanticSearchEnabled?.() === true; } catch { /* treat as disabled */ }
+        if (!enabled || typeof api?.data?.async?.semanticSearch !== "function") {
+          return fallbackToLexical("Semantic search is not enabled on this graph (requires embeddings enabled and a signed-in user). Showing exact-text matches instead.");
+        }
+
+        let raw;
         try {
-          results = await deps.queryRoamDatalog(`${baseQuery.slice(0, -1)}
-          :limit ${hardCap}]`);
+          raw = await api.data.async.semanticSearch({ "search-str": rawQuery });
         } catch (error) {
-          console.warn("[Chief of Staff] Roam :limit unsupported; running unbounded roam_search scan.");
-          results = await deps.queryRoamDatalog(baseQuery, api);
+          return fallbackToLexical(`Semantic search failed (${error?.message || "unknown error"}). Showing exact-text matches instead.`);
         }
-        // Final case-insensitive filter in JS (catches any case the variants missed)
-        const allResults = Array.isArray(results) ? results : [];
-        const filtered = allResults.filter(([, text]) => text && text.toLowerCase().includes(queryText));
-        const capped = filtered.slice(0, limit).map(([uid, text, page]) => ({ uid, text, page }));
-        if (filtered.length > limit) {
-          capped.push({ _note: `Showing ${limit} of ${filtered.length} matches. Increase max_results (up to 500) to see more.` });
-        } else if (capped.length === 0) {
-          capped.push({ _note: `No matches found for "${String(query || "").slice(0, 80)}". Try a different or broader query.` });
+
+        // Results are skeletons ({type: block|chunk|page, uid, topUids}) with no
+        // text or score, and the API ignores limit/pull params — dedupe, cap,
+        // and hydrate content ourselves.
+        const items = [];
+        const seen = new Set();
+        for (const r of Array.isArray(raw) ? raw : []) {
+          const uid = r?.uid;
+          if (!uid || seen.has(uid)) continue;
+          seen.add(uid);
+          items.push({ uid, type: r.type || "block", topUids: Array.isArray(r.topUids) ? r.topUids : [] });
+          if (items.length >= limit + 10) break; // buffer: COS log pages are filtered out below
         }
-        return capped;
+
+        const records = await pullSearchRecords(api, items.map(i => i.uid));
+        // Chunks can anchor to a different top-level block — hydrate misses via topUids.
+        const isEmpty = rec => !rec || (rec.text == null && rec.title == null);
+        const missing = items.filter(i => isEmpty(records.get(i.uid)) && i.topUids.length);
+        const topRecords = missing.length
+          ? await pullSearchRecords(api, missing.flatMap(i => i.topUids))
+          : new Map();
+
+        const shaped = items.map(i => {
+          let rec = records.get(i.uid);
+          if (isEmpty(rec)) {
+            rec = i.topUids.map(u => topRecords.get(u)).find(r => !isEmpty(r)) || rec;
+          }
+          if (isEmpty(rec)) return { uid: i.uid, type: i.type };
+          if (rec.title != null && rec.text == null) return { uid: i.uid, type: "page", page: rec.title };
+          return { uid: i.uid, type: i.type, text: truncateMatchSnippet(rec.text, rawQuery), page: rec.page || null };
+        }).filter(r => !SEARCH_EXCLUDED_PAGES.has(r.page)).slice(0, limit);
+        if (shaped.length === 0) {
+          shaped.push({ _note: `No semantic matches found for "${rawQuery.slice(0, 80)}". Try rephrasing the query.` });
+        }
+        return shaped;
       }
     },
     {
