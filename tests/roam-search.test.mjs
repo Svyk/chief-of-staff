@@ -247,6 +247,41 @@ test("roam_semantic_search filters out COS log pages", async () => {
   assert.deepEqual(results.map(r => r.uid), ["b1"]);
 });
 
+test("both search tools exclude Synthesis and Corrections (self-referential quotes must not masquerade as graph content)", async () => {
+  const exact = getNamedTool("roam_search", {
+    getRoamAlphaApi: () => searchApi({
+      searchResults: [
+        { ":block/uid": "s1", ":block/string": "Proposed memory: When I say something like \"check the weather\"…" },
+        { ":block/uid": "c1", ":block/string": "intent-dismissed: \"check the weather\" — classified as: \"web search\"" },
+        { ":block/uid": "b1", ":block/string": "weather station notes" },
+      ],
+      pullRecords: {
+        s1: { ":block/uid": "s1", ":block/page": { ":node/title": "Chief of Staff/Synthesis" } },
+        c1: { ":block/uid": "c1", ":block/page": { ":node/title": "Chief of Staff/Corrections" } },
+        b1: { ":block/uid": "b1", ":block/page": { ":node/title": "Projects" } },
+      },
+    }),
+  });
+  const exactResults = await exact.execute({ query: "weather" });
+  assert.deepEqual(exactResults.map(r => r.uid), ["b1"]);
+
+  const semantic = getNamedTool("roam_semantic_search", {
+    getRoamAlphaApi: () => searchApi({
+      semanticEnabled: true,
+      semanticResults: [
+        { type: "block", uid: "s1", topUids: ["s1"] },
+        { type: "block", uid: "b1", topUids: ["b1"] },
+      ],
+      pullRecords: {
+        s1: { ":block/uid": "s1", ":block/string": "Proposed memory: weather intent", ":block/page": { ":node/title": "Chief of Staff/Synthesis" } },
+        b1: { ":block/uid": "b1", ":block/string": "weather station notes", ":block/page": { ":node/title": "Projects" } },
+      },
+    }),
+  });
+  const semanticResults = await semantic.execute({ query: "weather" });
+  assert.deepEqual(semanticResults.map(r => r.uid), ["b1"]);
+});
+
 test("roam_semantic_search returns a helpful note when there are no semantic matches", async () => {
   const tool = getNamedTool("roam_semantic_search", {
     getRoamAlphaApi: () => searchApi({ semanticEnabled: true, semanticResults: [] }),

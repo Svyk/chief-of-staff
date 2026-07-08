@@ -72,8 +72,15 @@ export function getRoamNativeTools() {
 
   // Machine-generated COS log pages — their entries echo past prompts/runs, so
   // an agent searching "racquet sports" finds its own audit trail. Excluded
-  // from both search tools.
-  const SEARCH_EXCLUDED_PAGES = new Set(["Chief of Staff/Audit Log", "Chief of Staff/Usage Stats"]);
+  // from both search tools. Corrections and Synthesis quote user prompts and
+  // COS output verbatim, so they'd surface the same way — and a PROPOSED
+  // memory read back through search could masquerade as an established fact.
+  const SEARCH_EXCLUDED_PAGES = new Set([
+    "Chief of Staff/Audit Log",
+    "Chief of Staff/Usage Stats",
+    "Chief of Staff/Corrections",
+    "Chief of Staff/Synthesis",
+  ]);
 
   // Cap a result's text so a handful of huge blocks (5KB+ embedded JSON, code)
   // can't blow the tool-result char budget. Windows around the first match

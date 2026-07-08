@@ -19,6 +19,7 @@ import {
 import { initCosLinkedRefsFilter, teardownCosLinkedRefsFilter } from "./cos-linked-refs-filter.js";
 import { initCorrectionCapture, trackCosWrite, readBackBlockTree, scanForCorrections, getTrackedWrites, trackDismissedSuggestion, DIFF_SCAN_INTERVAL_MS } from "./correction-capture.js";
 import { initGraphHygiene, scanOrphanPages, scanStaleLinks, getOrphanPagesResult, getStaleLinkResult, ORPHAN_SCAN_INTERVAL_MS, STALE_LINK_SCAN_INTERVAL_MS } from "./graph-hygiene.js";
+import { initSynthesis, runSynthesisChunk, initialSynthesisState, getSynthesisResult, SYNTHESIS_IDLE_CHECK_INTERVAL_MS } from "./synthesis.js";
 import iziToast from "izitoast";
 import { launchOnboarding, teardownOnboarding } from "./onboarding/onboarding.js";
 import { computeRoutingScore, recordTurnOutcome, sessionTrajectory } from "./tier-routing.js";
@@ -374,6 +375,7 @@ const SETTINGS_KEYS = {
   correctionCaptureEnabled: "correction-capture-enabled",
   graphHygieneOrphansEnabled: "graph-hygiene-orphans-enabled",
   graphHygieneStaleLinkEnabled: "graph-hygiene-stale-links-enabled",
+  synthesisEnabled: "synthesis-enabled",
   skillAutoresearchEnabled: "skill-autoresearch-enabled",
   skillAutoresearchBudget: "skill-autoresearch-budget",
   skillAutoresearchToolCalling: "skill-autoresearch-tool-calling",
@@ -3080,6 +3082,7 @@ const PAGE_DESCRIPTIONS = {
   "Chief of Staff/Eval Log": `${PAGE_DESCRIPTION_PREFIX}Quality scores for sampled runs — task completion, factual grounding, safety, binary checks, rubric results.`,
   "Chief of Staff/Review Queue": `${PAGE_DESCRIPTION_PREFIX}Action backlog — runs that scored low or triggered safety concerns. Review and mark status.`,
   "Chief of Staff/Corrections": `${PAGE_DESCRIPTION_PREFIX}User feedback — blocks you edited or deleted after COS wrote them. Detected automatically via idle-time diff scans.`,
+  "Chief of Staff/Synthesis": `${PAGE_DESCRIPTION_PREFIX}Synthesis reports — proposed memories distilled from repeated corrections, plus stale-memory flags. Propose-only: nothing is written to memory without your approval.`,
   "Chief of Staff/Skills": `${PAGE_DESCRIPTION_PREFIX}Skill definitions loaded on demand. Each top-level block is a skill with triggers, sources, output format, and constraints.`,
 };
 
@@ -4261,6 +4264,33 @@ function setChiefNamespaceGlobals() {
       tracked: () => getTrackedWrites(),
       scan: () => scanForCorrections({ offset: 0, corrections: [] }, { timeRemaining: () => 5000 }),
     },
+    synthesis: {
+      result: () => getSynthesisResult(),
+      // Force a real run: rewind the persisted interval gate, then drive the
+      // chunks directly (bypasses idle/activity gates AND the weekly spacing).
+      // settings.set is async in Roam — await it or the gate reads a stale value.
+      forceRun: async () => {
+        if (extensionAPIRef) {
+          await extensionAPIRef.settings.set("synthesis-last-run-at", Date.now() - 8 * 24 * 60 * 60 * 1000);
+        }
+        let state = initialSynthesisState();
+        const fakeDeadline = { timeRemaining: () => 60000 };
+        let safety = 1000;
+        while (safety-- > 0) {
+          const r = runSynthesisChunk(state, fakeDeadline);
+          state = r.state;
+          if (r.done) break;
+        }
+        return getSynthesisResult();
+      },
+      // Reset first-run deferral / fingerprints for repeat testing.
+      reset: async () => {
+        if (!extensionAPIRef) return false;
+        await extensionAPIRef.settings.set("synthesis-last-run-at", undefined);
+        await extensionAPIRef.settings.set("synthesis-proposal-fingerprints", undefined);
+        return true;
+      },
+    },
     graphHygiene: {
       orphans: () => getOrphanPagesResult(),
       staleLinks: () => getStaleLinkResult(),
@@ -4499,6 +4529,7 @@ function getStatusSnapshot() {
     session: getSessionTokenUsage(),
     cronJobs: loadCronJobs(),
     idle: getIdleSchedulerState(),
+    synthesis: getSynthesisResult(),
     pendingPlan: getPendingPlan(),
     undoBatch: getUndoableBatch(),
     composio: {
@@ -6509,6 +6540,23 @@ function onload({ extensionAPI }) {
         debugLog("[Graph Hygiene] Stale link idle task unregistered (setting toggled off)");
       }
     },
+    onSynthesisToggle: (enabled) => {
+      if (enabled) {
+        registerIdleTask({
+          id: "synthesis",
+          priority: 90,
+          intervalMs: SYNTHESIS_IDLE_CHECK_INTERVAL_MS,
+          init: initialSynthesisState,
+          processChunk: runSynthesisChunk,
+          onComplete: () => { debugLog("[Synthesis] Idle cycle complete"); },
+          onError: (err) => { debugLog("[Synthesis] Idle task error:", err?.message); }
+        });
+        debugLog("[Synthesis] Idle task registered (setting toggled on)");
+      } else {
+        unregisterIdleTask("synthesis");
+        debugLog("[Synthesis] Idle task unregistered (setting toggled off)");
+      }
+    },
   });
   initOpenAiCodexAuth({
     debugLog,
@@ -7106,6 +7154,30 @@ function onload({ extensionAPI }) {
       processChunk: scanStaleLinks,
       onComplete: () => { debugLog("[Graph Hygiene] Stale link scan complete"); },
       onError: (err) => { debugLog("[Graph Hygiene] Stale link scan error:", err?.message); }
+    });
+  }
+
+  // Synthesis (#102 Phase 1): initialise and register idle task if enabled
+  initSynthesis({
+    debugLog,
+    getExtensionAPIRef: () => extensionAPIRef,
+    getRoamAlphaApi: () => window.roamAlphaAPI,
+    ensurePageUidByTitle: (title) => ensurePageUidByTitle(title),
+    createRoamBlock: (parentUid, text, order) => createRoamBlock(parentUid, text, order),
+    getFirstContentOrder,
+    formatRoamDate,
+    formatLogDateRef,
+    showInfoToast,
+  });
+  if (getSettingBool(extensionAPIRef, SETTINGS_KEYS.synthesisEnabled, false)) {
+    registerIdleTask({
+      id: "synthesis",
+      priority: 90,
+      intervalMs: SYNTHESIS_IDLE_CHECK_INTERVAL_MS,
+      init: initialSynthesisState,
+      processChunk: runSynthesisChunk,
+      onComplete: () => { debugLog("[Synthesis] Idle cycle complete"); },
+      onError: (err) => { debugLog("[Synthesis] Idle task error:", err?.message); }
     });
   }
 

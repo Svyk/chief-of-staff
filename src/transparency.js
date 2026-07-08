@@ -182,7 +182,7 @@ function describeCronSchedule(job, now) {
 
 /**
  * Build the /status report from a snapshot assembled by index.js:
- * { now, provider, session, cronJobs, idle, pendingPlan, undoBatch,
+ * { now, provider, session, cronJobs, idle, synthesis, pendingPlan, undoBatch,
  *   composio: { connected, installedCount, pendingCount },
  *   localMcp: [{ name, tools }], remoteMcp: [{ name, tools }] }
  */
@@ -240,6 +240,10 @@ export function buildStatusReport(snapshot) {
     const role = idle.isCoordinator ? "this tab coordinates" : "another tab coordinates";
     lines.push(`- Idle scheduler active (${role}): ${tasks.length ? tasks.join(", ") : "no tasks registered"}`);
     if (idle.activeTaskId) lines.push(`- Currently running: ${idle.activeTaskId}`);
+  }
+  if (s.synthesis) {
+    const syn = s.synthesis;
+    lines.push(`- Last synthesis: ${formatRelativeTime(syn.ranAt, now)} — ${syn.proposalCount} proposal${syn.proposalCount === 1 ? "" : "s"}, ${syn.staleMemoryCount} stale memory flag${syn.staleMemoryCount === 1 ? "" : "s"}`);
   }
 
   // Pending plan / undoable batch

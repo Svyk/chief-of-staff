@@ -923,6 +923,22 @@ export function buildSettingsConfig(extensionAPI) {
         }
       },
       {
+        id: deps.SETTINGS_KEYS.synthesisEnabled,
+        name: "Correction Synthesis",
+        description: "Weekly deterministic pass over [[Chief of Staff/Corrections]]: repeated corrections become proposed memories on [[Chief of Staff/Synthesis]], and stale memory entries are flagged. Propose-only — nothing is written to memory without your approval. Needs Correction Capture enabled to have data to synthesise. Runs during idle time only.",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.synthesisEnabled, false),
+          onChange: () => {
+            setTimeout(() => {
+              if (typeof deps.onSynthesisToggle === "function") {
+                deps.onSynthesisToggle(deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.synthesisEnabled, false));
+              }
+            }, 100);
+          }
+        }
+      },
+      {
         id: deps.SETTINGS_KEYS.evalEnabled,
         name: "Post-Run Evaluation",
         description: "Automatic quality scoring after each agent interaction using an LLM judge. Produces 1-5 rubric scores plus binary pass/fail checks. Low scores or failed checks are routed to [[Chief of Staff/Review Queue]]. Adds roughly $0.001–0.003 per evaluated run.",
