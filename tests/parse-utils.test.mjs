@@ -6,6 +6,9 @@ import {
   buildChatTranscriptBlocks,
   looksLikeRoamUid,
   buildRoamTagString,
+  stripConversationalPrefix,
+  extractSkillTriggerPhrases,
+  matchSkillByTriggerPhrase,
 } from "../src/parse-utils.js";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -273,4 +276,126 @@ test("buildRoamTagString returns empty for blank / invalid input", () => {
 
 test("buildRoamTagString drops stray brackets that would break the #[[ ]] form", () => {
   assert.equal(buildRoamTagString("Foo]]bar"), "#Foobar");
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// stripConversationalPrefix (#136b2)
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("stripConversationalPrefix removes leading fillers with/without comma", () => {
+  assert.equal(stripConversationalPrefix("no, run the X skill on Y"), "run the X skill on Y");
+  assert.equal(stripConversationalPrefix("ok run the audit"), "run the audit");
+  assert.equal(stripConversationalPrefix("actually, audit skill assumptions"), "audit skill assumptions");
+  assert.equal(stripConversationalPrefix("yes please do the thing"), "do the thing");
+});
+
+test("stripConversationalPrefix peels stacked fillers", () => {
+  assert.equal(stripConversationalPrefix("ok, no, run it"), "run it");
+});
+
+test("stripConversationalPrefix leaves real leading command words alone", () => {
+  assert.equal(stripConversationalPrefix("search for tennis"), "search for tennis");
+  assert.equal(stripConversationalPrefix("well-being report"), "well-being report");
+  assert.equal(stripConversationalPrefix("run the skill"), "run the skill");
+  assert.equal(stripConversationalPrefix("okra recipe"), "okra recipe"); // not "ok" + "ra"
+});
+
+test("stripConversationalPrefix handles blank input", () => {
+  assert.equal(stripConversationalPrefix(""), "");
+  assert.equal(stripConversationalPrefix(null), "");
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// extractSkillTriggerPhrases (#136a)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const AUDIT_CONTENT = [
+  "Description: audit a skill's guardrails.",
+  'Triggers: "run the Skill Assumption Audit skill on [skill]", "skill assumption audit", "audit skill assumptions", "assumption audit for [skill]", "audit guardrails"',
+  "Tier: power",
+].join("\n");
+
+test("extractSkillTriggerPhrases pulls quoted phrases, lowercased", () => {
+  const phrases = extractSkillTriggerPhrases(AUDIT_CONTENT);
+  assert.ok(phrases.includes("skill assumption audit"));
+  assert.ok(phrases.includes("audit skill assumptions"));
+  assert.ok(phrases.includes("audit guardrails"));
+});
+
+test("extractSkillTriggerPhrases strips [placeholder] and trailing connectors", () => {
+  const phrases = extractSkillTriggerPhrases(AUDIT_CONTENT);
+  // "assumption audit for [skill]" → "assumption audit" (placeholder + trailing "for" gone)
+  assert.ok(phrases.includes("assumption audit"));
+  assert.ok(!phrases.some(p => p.includes("[")));
+  assert.ok(!phrases.some(p => /\bfor$/.test(p)));
+});
+
+test("extractSkillTriggerPhrases drops single-word phrases (hijack risk)", () => {
+  const content = 'Triggers: "triage", "clean up today", "process"';
+  const phrases = extractSkillTriggerPhrases(content);
+  assert.ok(!phrases.includes("triage"));
+  assert.ok(!phrases.includes("process"));
+  assert.ok(phrases.includes("clean up today"));
+});
+
+test("extractSkillTriggerPhrases returns [] when no Triggers line", () => {
+  assert.deepEqual(extractSkillTriggerPhrases("Description: no triggers here"), []);
+  assert.deepEqual(extractSkillTriggerPhrases(""), []);
+});
+
+test("extractSkillTriggerPhrases handles a leading dash and em-dash separator", () => {
+  const phrases = extractSkillTriggerPhrases('- Triggers — "weekly review", "week retro"');
+  assert.ok(phrases.includes("weekly review"));
+  assert.ok(phrases.includes("week retro"));
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// matchSkillByTriggerPhrase (#136a)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const ENTRIES = [
+  { title: "Skill Assumption Audit", content: AUDIT_CONTENT },
+  { title: "Weekly Review", content: 'Triggers: "weekly review", "week in review"' },
+  { title: "Catch Me Up", content: 'Triggers: "catch me up", "what changed"' },
+];
+
+test("matchSkillByTriggerPhrase matches a phrase prefix and extracts the target", () => {
+  const r = matchSkillByTriggerPhrase("audit skill assumptions for Catch Me Up", ENTRIES);
+  assert.equal(r.skillName, "Skill Assumption Audit");
+  assert.equal(r.targetText, "Catch Me Up");
+  assert.equal(r.originalPrompt, "audit skill assumptions for Catch Me Up");
+});
+
+test("matchSkillByTriggerPhrase strips connector and article from the target", () => {
+  assert.equal(matchSkillByTriggerPhrase("audit skill assumptions on the Weekly Review", ENTRIES).targetText, "Weekly Review");
+});
+
+test("matchSkillByTriggerPhrase matches an exact full-message phrase with empty target", () => {
+  const r = matchSkillByTriggerPhrase("weekly review", ENTRIES);
+  assert.equal(r.skillName, "Weekly Review");
+  assert.equal(r.targetText, "");
+});
+
+test("matchSkillByTriggerPhrase works through a conversational prefix", () => {
+  const r = matchSkillByTriggerPhrase("no, audit skill assumptions for Catch Me Up", ENTRIES);
+  assert.equal(r.skillName, "Skill Assumption Audit");
+  assert.equal(r.targetText, "Catch Me Up");
+});
+
+test("matchSkillByTriggerPhrase prefers the longest matching phrase", () => {
+  // "skill assumption audit" (22) vs "audit skill assumptions" (23) — message favors the longer
+  const r = matchSkillByTriggerPhrase("skill assumption audit for Weekly Review", ENTRIES);
+  assert.equal(r.skillName, "Skill Assumption Audit");
+  assert.equal(r.targetText, "Weekly Review");
+});
+
+test("matchSkillByTriggerPhrase does NOT fire on incidental mid-sentence mentions", () => {
+  // phrase must be at the start, not buried
+  assert.equal(matchSkillByTriggerPhrase("remind me to do a weekly review tomorrow", ENTRIES), null);
+});
+
+test("matchSkillByTriggerPhrase returns null when nothing matches", () => {
+  assert.equal(matchSkillByTriggerPhrase("search for tennis", ENTRIES), null);
+  assert.equal(matchSkillByTriggerPhrase("", ENTRIES), null);
+  assert.equal(matchSkillByTriggerPhrase("weekly review", null), null);
 });

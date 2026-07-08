@@ -120,6 +120,87 @@ export function buildRoamTagString(rawTags) {
 }
 
 /**
+ * Strip leading conversational fillers ("no,", "ok", "actually", "yes", …) from
+ * a message so skill-invocation phrasing still routes after a filler prefix.
+ * Conservative by design: only a fixed high-confidence filler set, each as a
+ * whole word with an optional comma, so it can't eat a real leading command
+ * word (e.g. "well-being report", "search for X"). Loops to peel stacked
+ * fillers ("ok, no, run …"). (#136b2)
+ */
+export function stripConversationalPrefix(text) {
+  return String(text || "")
+    .replace(/^(?:(?:no|nope|ok|okay|yes|yeah|yep|sure|actually|alright|please)\b,?\s+)+/i, "")
+    .trim();
+}
+
+/**
+ * Extract natural-language trigger phrases from a skill's `Triggers:` line.
+ * Returns lowercased quoted phrases with `[placeholder]` tokens and trailing
+ * connector words removed. Single-word phrases are dropped — matching on them
+ * would hijack unrelated requests. (#136a)
+ */
+export function extractSkillTriggerPhrases(skillContent) {
+  const text = String(skillContent || "");
+  const line = text.match(/^\s*-?\s*Triggers?\s*[:—]\s*(.+)$/im);
+  if (!line) return [];
+  const phrases = [];
+  const seen = new Set();
+  const quoteRe = /["“”‘’']([^"“”‘’']+?)["“”‘’']/g;
+  let m;
+  while ((m = quoteRe.exec(line[1])) !== null) {
+    const p = m[1]
+      .toLowerCase()
+      .replace(/\[[^\]]*\]/g, " ")               // drop [skill] placeholders
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\s+(?:for|on|of|about|to)$/i, "") // drop trailing connector
+      .trim();
+    if (p.split(" ").filter(Boolean).length < 2) continue; // no single-word triggers
+    if (!seen.has(p)) { seen.add(p); phrases.push(p); }
+  }
+  return phrases;
+}
+
+/**
+ * Match a message against skills' own declared trigger phrases, for when the
+ * explicit "run the X skill" phrasing wasn't used (e.g. "audit skill
+ * assumptions for Catch Me Up"). Anchored: the message must EQUAL a phrase or
+ * START WITH one, so incidental mentions don't fire. Longest phrase wins; the
+ * remainder (minus a leading connector/article) becomes the target. (#136a)
+ *
+ * @param {string} userMessage
+ * @param {Array<{title:string, content:string}>} skillEntries
+ * @returns {{ skillName:string, targetText:string, originalPrompt:string } | null}
+ */
+export function matchSkillByTriggerPhrase(userMessage, skillEntries) {
+  const raw = stripConversationalPrefix(String(userMessage || "").trim());
+  const lc = raw.toLowerCase();
+  if (!lc || !Array.isArray(skillEntries)) return null;
+
+  let best = null;
+  for (const entry of skillEntries) {
+    const title = String(entry?.title || "").trim();
+    if (!title) continue;
+    for (const p of extractSkillTriggerPhrases(entry?.content || "")) {
+      let target = null;
+      if (lc === p) {
+        target = "";
+      } else if (lc.startsWith(p + " ")) {
+        target = raw.slice(p.length).trim()
+          .replace(/^(?:for|on|of|about|to|:)\s+/i, "")
+          .replace(/^(?:the|my|a)\s+/i, "")
+          .trim();
+      }
+      if (target !== null && (!best || p.length > best.phraseLen)) {
+        best = { skillName: title, phraseLen: p.length, target };
+      }
+    }
+  }
+  if (!best) return null;
+  return { skillName: best.skillName, targetText: best.target, originalPrompt: String(userMessage || "").trim() };
+}
+
+/**
  * Build block strings for a chat transcript export (/export command).
  * Takes the chat panel history (array of { role, text }) and returns an
  * array of Roam block strings, one per message, prefixed with a bold

@@ -21,6 +21,7 @@ import { buildDefaultSystemPrompt } from "./system-prompt.js";
 import { CHAT_COMMANDS } from "./chat-commands.js";
 import { wrapUntrustedWithInjectionScan } from "./security.js";
 import { persistAuditLogEntry, recordUsageStat } from "./usage-tracking.js";
+import { stripConversationalPrefix, matchSkillByTriggerPhrase } from "./parse-utils.js";
 
 // ── Dependency injection ───────────────────────────────────────────────────────
 
@@ -129,7 +130,10 @@ export function parseMemorySaveIntent(userMessage) {
 }
 
 export function parseSkillInvocationIntent(userMessage) {
-  const text = String(userMessage || "").trim();
+  const raw = String(userMessage || "").trim();
+  // Strip conversational fillers ("no,", "ok", \u2026) so a filler-prefixed command
+  // still routes. originalPrompt keeps the raw text for faithful eval/audit. (#136b2)
+  const text = stripConversationalPrefix(raw);
   if (!text) return null;
 
   // Strip leading articles/possessives that aren't part of skill names
@@ -140,7 +144,7 @@ export function parseSkillInvocationIntent(userMessage) {
     return {
       skillName: stripLeadingNoise(explicitMatch[1]),
       targetText: String(explicitMatch[2] || "").trim(),
-      originalPrompt: text
+      originalPrompt: raw
     };
   }
 
@@ -149,7 +153,7 @@ export function parseSkillInvocationIntent(userMessage) {
     return {
       skillName: stripLeadingNoise(inverseMatch[1]),
       targetText: String(inverseMatch[2] || "").trim(),
-      originalPrompt: text
+      originalPrompt: raw
     };
   }
   return null;
@@ -848,6 +852,16 @@ function resolveToolWhitelist(parsedToolNames, allToolSchemas, localMcpTools, re
       continue;
     }
 
+    // COS extension-internal tools (cos_get_skill, cos_write_draft_skill, …) are
+    // ALWAYS available — the agent loop unconditionally admits any "cos_"-prefixed
+    // tool regardless of the whitelist (see agent-loop.js). They aren't in the
+    // schema list passed here, so resolve them directly to avoid a spurious
+    // "not currently available" warning and an incomplete whitelist. (#136c)
+    if (name.startsWith("cos_")) {
+      whitelist.add(name);
+      continue;
+    }
+
     // Routed Roam tools (roam_batch_write, roam_find_todos, etc.) aren't in allToolSchemas
     // directly — they're accessed via ROAM_ROUTE → ROAM_EXECUTE. Include the meta-tools.
     if (name.startsWith("roam_")) {
@@ -912,7 +926,17 @@ async function runDeterministicSkillInvocation(intent, options = {}) {
     return `I couldn't find a skill named "${skillName}".${suffix}`;
   }
 
-  const skillPrompt = String(intent?.targetText || "").trim() || `Apply the "${skill.title}" skill to this request: ${intent?.originalPrompt || ""}`;
+  // Compose the loop prompt. A bare target ("Catch Me Up") reads to the model as
+  // a request to RUN that skill, not to apply THIS skill to it — so always frame
+  // it as "Apply the <skill> skill to: <target>". (#136b)
+  const targetText = String(intent?.targetText || "").trim();
+  const skillPrompt = targetText
+    ? `Apply the "${skill.title}" skill to: ${targetText}`
+    : `Apply the "${skill.title}" skill to this request: ${intent?.originalPrompt || ""}`;
+  // What the user actually typed — used for the eval judge and audit log so the
+  // judge scores the response against the real request, not the composed prompt
+  // or the bare target. (#136b)
+  const userPrompt = String(intent?.originalPrompt || "").trim() || skillPrompt;
   showInfoToastIfAllowed("Skill", `Applying: ${skill.title}`, suppressToasts);
 
   // Detect daily-page-write skills by name or content
@@ -1170,7 +1194,7 @@ ${systemPromptSuffix}${mcpToolHintsSection}`;
   if (typeof deps.getLastAgentRunTrace === "function") {
     const auditTrace = deps.getLastAgentRunTrace();
     if (auditTrace) {
-      persistAuditLogEntry(auditTrace, skillPrompt, { skillName: skill.title });
+      persistAuditLogEntry(auditTrace, userPrompt, { skillName: skill.title });
       recordUsageStat("agentRuns");
     }
   }
@@ -1185,7 +1209,7 @@ ${systemPromptSuffix}${mcpToolHintsSection}`;
       // Merge acceptance criteria (pre-flight) with rubric for post-run eval
       const allChecks = [...acceptance, ...rubric];
       deps.debugLog("[Chief flow] Triggering skill eval:", skill.title, "acceptance:", acceptance.length, "rubric:", rubric.length, "trace:", !!evalTrace);
-      deps.evaluateAgentRun(evalTrace, skillPrompt, textForEval, {
+      deps.evaluateAgentRun(evalTrace, userPrompt, textForEval, {
         skillName: skill.title,
         rubricChecks: allChecks.length > 0 ? allChecks : null
       }).catch(err => {
@@ -2753,7 +2777,24 @@ export async function tryRunDeterministicAskIntent(prompt, context = {}) {
     promptLooksLikeWorkflowDraftFollowUp(prompt, recentWorkflowSuggestions)
     ? { skillName: "Suggest Workflows", targetText: prompt, originalPrompt: prompt }
     : null;
-  const resolvedSkillIntent = skillIntent || briefingIntent || workflowSuggestIntent || workflowDraftIntent;
+  // Trigger-phrase fallback: match a skill by its own declared Triggers when the
+  // explicit "run the X skill" phrasing wasn't used (e.g. "audit skill assumptions
+  // for Catch Me Up"). Anchored, ≥2-word phrases only — can't hijack general
+  // requests. Skill entries are cached, so this is cheap. (#136a)
+  let triggerSkillIntent = null;
+  if (!skillIntent && !briefingIntent && !workflowSuggestIntent && !workflowDraftIntent && !isCronIntent) {
+    try {
+      const skillEntries = await deps.getSkillEntries();
+      triggerSkillIntent = matchSkillByTriggerPhrase(prompt, skillEntries);
+      if (triggerSkillIntent) {
+        deps.debugLog("[Chief flow] Skill trigger-phrase match:", triggerSkillIntent.skillName);
+      }
+    } catch (err) {
+      deps.debugLog("[Chief flow] Trigger-phrase match error (non-fatal):", err?.message);
+    }
+  }
+
+  const resolvedSkillIntent = skillIntent || briefingIntent || workflowSuggestIntent || workflowDraftIntent || triggerSkillIntent;
   if (resolvedSkillIntent) {
     deps.debugLog("[Chief flow] Deterministic route matched: skill_invoke", {
       skillName: resolvedSkillIntent?.skillName || "",
