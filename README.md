@@ -614,7 +614,7 @@ Inbox processing uses a strict allowlist — any tool not on this list is blocke
 
 | Category | Tools available |
 |---|---|
-| Roam read | `roam_search`, `roam_get_page`, `roam_get_daily_page`, `roam_get_block_children`, `roam_get_block_context`, `roam_get_page_metadata`, `roam_get_recent_changes`, `roam_link_suggestions` |
+| Roam read | `roam_search`, `roam_semantic_search`, `roam_get_page`, `roam_get_daily_page`, `roam_get_block_children`, `roam_get_block_context`, `roam_get_page_metadata`, `roam_get_recent_changes`, `roam_link_suggestions` |
 | Better Tasks read | `roam_bt_search_tasks`, `roam_bt_get_projects`, `roam_bt_get_waiting_for`, `roam_bt_get_context`, `roam_bt_get_analytics`, `roam_bt_get_task_by_uid`, `roam_bt_get_attributes` |
 | Web | `roam_web_fetch` |
 | COS | `cos_get_skill`, `cos_get_tool_ecosystem`, `cos_cron_list` |

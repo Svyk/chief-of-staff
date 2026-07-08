@@ -1842,21 +1842,39 @@ export async function tryRunDeterministicAskIntent(prompt, context = {}) {
   if (searchMatch) {
     const query = searchMatch[1].replace(/^["']|["']$/g, "").trim();
     if (query && query.length >= 2) {
-      deps.debugLog("[Chief flow] Deterministic route matched: search", query);
       const roamTools = deps.getRoamNativeTools() || [];
-      const tool = roamTools.find(t => t.name === "roam_search");
+      // Conceptual phrasing ("my notes about X", "everything related to X") reads
+      // as a meaning-based lookup — route to roam_semantic_search with the topic
+      // itself (the tool falls back to exact-text search when semantic isn't
+      // enabled on the graph). Plain "search for X" stays on exact-text search.
+      const conceptual = query.match(/^(?:my\s+|any\s+)?(?:notes?|thoughts?|ideas?|blocks?|pages?|anything|everything|stuff)\s+(?:about|on|regarding|mentioning|related\s+to)\s+(.+)$/i);
+      const toolName = conceptual ? "roam_semantic_search" : "roam_search";
+      const effectiveQuery = conceptual ? conceptual[1].trim() : query;
+      deps.debugLog("[Chief flow] Deterministic route matched: search", effectiveQuery, `(${toolName})`);
+      const tool = roamTools.find(t => t.name === toolName) || roamTools.find(t => t.name === "roam_search");
       if (tool && typeof tool.execute === "function") {
         try {
-          const results = await tool.execute({ query, max_results: 20 });
-          if (!Array.isArray(results) || results.length === 0) {
-            return deps.publishAskResponse(prompt, `No results found for "${query}".`, assistantName, suppressToasts);
+          const results = await tool.execute({ query: effectiveQuery, max_results: 20 });
+          const items = Array.isArray(results) ? results.filter(r => r && !r._note) : [];
+          const note = Array.isArray(results) ? results.find(r => r?._note)?._note : null;
+          if (items.length === 0) {
+            return deps.publishAskResponse(prompt, note || `No results found for "${effectiveQuery}".`, assistantName, suppressToasts);
           }
-          const lines = [`**Search results for "${query}"** (${results.length} match${results.length === 1 ? "" : "es"}):\n`];
-          for (const r of results) {
+          const lines = [`**Search results for "${effectiveQuery}"** (${items.length} match${items.length === 1 ? "" : "es"}):\n`];
+          for (const r of items) {
             const pageRef = r.page ? `[[${r.page}]]` : "";
-            const text = String(r.text || "").slice(0, 200);
+            if (r.type === "page") {
+              lines.push(`- ${pageRef} — page`);
+              continue;
+            }
+            let text = String(r.text || "");
+            if (text.length > 200) {
+              const trimmed = text.slice(0, 200).replace(/\s+\S*$/, "");
+              text = (trimmed || text.slice(0, 200)) + " …";
+            }
             lines.push(`- ${pageRef}: ${text}`);
           }
+          if (note) lines.push(`\n*${note}*`);
           return deps.publishAskResponse(prompt, lines.join("\n"), assistantName, suppressToasts);
         } catch (e) {
           return deps.publishAskResponse(prompt, `Search failed: ${e?.message || "Unknown error"}`, assistantName, suppressToasts);

@@ -623,3 +623,16 @@ test("computeToolCallScope: unknown/empty tool returns none scope", () => {
   assert.equal(computeToolCallScope("", {}).scopeType, "none");
   assert.equal(computeToolCallScope(null, null).scopeType, "none");
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// isExternalDataToolCall — live-data guard grounding
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("isExternalDataToolCall: roam_semantic_search satisfies the live-data guard like roam_search", async () => {
+  const { isExternalDataToolCall } = await import("../src/tool-execution.js");
+  initToolExecution(makeDeps({ getToolSchema: () => null }));
+  assert.equal(isExternalDataToolCall("roam_search"), true);
+  assert.equal(isExternalDataToolCall("roam_semantic_search"), true,
+    "roam_semantic_search must ground live-data intents or the guard overwrites valid answers");
+  assert.equal(isExternalDataToolCall("roam_create_block"), false);
+});

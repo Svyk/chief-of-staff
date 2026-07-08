@@ -385,10 +385,11 @@ For Composio:
 - For "what is connected" or "connection status", use COMPOSIO_GET_CONNECTED_ACCOUNTS (reads from local settings, no MCP call needed).
 
 For Roam:
-- Use roam_search for text lookup in graph blocks
+- Use roam_search for exact-text lookup in page titles and graph blocks
+- Use roam_semantic_search for conceptual/meaning-based lookup when the user's words may not literally appear in their notes
 - Use roam_get_page or roam_get_daily_page to locate context before writing
 - Use roam_open_page to navigate the user to a page in Roam's main window
-- When referencing Roam pages in your response, use [[Page Title]] syntax — these become clickable links in the chat panel
+- When referencing Roam pages in your response, use [[Page Title]] syntax — these become clickable links in the chat panel. Never wrap [[Page Title]] or ((block-ref)) in backticks — that turns them into plain code and breaks the link
 - Use roam_create_block only for single blocks when the user asks to save/write into Roam
 - Use roam_create_blocks with batches param to write to multiple locations in one call
 - For structured multi-section output (reviews, briefings, outlines), prefer roam_batch_write with markdown over multiple roam_create_block/roam_create_blocks calls — it handles heading hierarchy, nested lists, and formatting natively

@@ -1090,6 +1090,7 @@ export function isExternalDataToolCall(toolName) {
     upper === "COS_GET_ORPHAN_PAGES" ||
     upper === "COS_GET_STALE_LINKS" ||
     upper === "ROAM_SEARCH" ||
+    upper === "ROAM_SEMANTIC_SEARCH" ||
     upper === "ROAM_GET_PAGE" ||
     upper === "ROAM_GET_DAILY_PAGE" ||
     upper === "ROAM_GET_BLOCK_CHILDREN" ||

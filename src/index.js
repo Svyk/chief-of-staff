@@ -475,6 +475,7 @@ const SOURCE_TOOL_NAME_MAP = {
   "roam_get_page": "roam_get_page",
   "roam_search": "roam_search",
   "roam_search_text": "roam_search",
+  "roam_semantic_search": "roam_semantic_search",
   // Local MCP tool aliases (Google Calendar, etc.)
   "list-events": "list-events",
   "search-events": "search-events",
@@ -623,6 +624,7 @@ let btProjectsCache = null; // { result, timestamp } — cached for session, cle
 const INBOX_READ_ONLY_TOOL_ALLOWLIST = new Set([
   // Roam read tools
   "roam_search",
+  "roam_semantic_search",
   "roam_get_page",
   "roam_get_daily_page",
   "roam_get_block_children",
@@ -1022,6 +1024,11 @@ function renderInlineMarkdown(text) {
 
   // Extract all link-like patterns BEFORE escapeHtml so we get raw values
   let raw = String(text || "");
+  // LLMs sometimes wrap refs in backticks (`[[Page]]`, `((uid))`) — since code
+  // spans are extracted first, that would render inert code chips instead of
+  // clickable refs. Unwrap code spans that contain only a ref.
+  raw = raw.replace(/`(\[\[[^`]+\]\])`/g, "$1");
+  raw = raw.replace(/`(\(\([a-zA-Z0-9_-]{9,12}\)\))`/g, "$1");
   raw = raw.replace(/`([^`]+)`/g, (_, code) => {
     const key = `__CODE_${nonce}_${codeChunks.length}__`;
     codeChunks.push(`<code class="chief-inline-code">${escapeHtml(code)}</code>`);
