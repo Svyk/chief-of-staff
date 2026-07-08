@@ -253,11 +253,15 @@ test("both search tools exclude Synthesis and Corrections (self-referential quot
       searchResults: [
         { ":block/uid": "s1", ":block/string": "Proposed memory: When I say something like \"check the weather\"…" },
         { ":block/uid": "c1", ":block/string": "intent-dismissed: \"check the weather\" — classified as: \"web search\"" },
+        { ":block/uid": "r1", ":block/string": "Prompt: \"check the weather\" — Did not perform the requested action" },
+        { ":block/uid": "e1", ":block/string": "Eval: weather query scored 2/5 on task completion" },
         { ":block/uid": "b1", ":block/string": "weather station notes" },
       ],
       pullRecords: {
         s1: { ":block/uid": "s1", ":block/page": { ":node/title": "Chief of Staff/Synthesis" } },
         c1: { ":block/uid": "c1", ":block/page": { ":node/title": "Chief of Staff/Corrections" } },
+        r1: { ":block/uid": "r1", ":block/page": { ":node/title": "Chief of Staff/Review Queue" } },
+        e1: { ":block/uid": "e1", ":block/page": { ":node/title": "Chief of Staff/Eval Log" } },
         b1: { ":block/uid": "b1", ":block/page": { ":node/title": "Projects" } },
       },
     }),
