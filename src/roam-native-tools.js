@@ -15,7 +15,12 @@ export const ROAM_CORE_TOOLS = new Set([
   "roam_search", "roam_semantic_search", "roam_create_block", "roam_update_block",
   "roam_get_page", "roam_get_block_children", "roam_get_daily_page",
   "roam_open_page", "roam_delete_block", "roam_create_blocks",
-  "roam_create_page", "roam_web_fetch"
+  "roam_create_page", "roam_web_fetch",
+  // Skill-facing COS tools. These must be DIRECT: a skill's `Tools:` whitelist
+  // strips ROAM_ROUTE/ROAM_EXECUTE, so a routed tool named in a whitelist is
+  // unreachable — the agent loop's `startsWith("cos_")` bypass only admits
+  // tools already in the array, it cannot add a routed one to it.
+  "cos_get_skill", "cos_count_skill_tokens", "cos_write_draft_skill"
 ]);
 
 const ROAM_TOOL_CATEGORIES = {
