@@ -4,6 +4,8 @@
 // (discovered via ROAM_ROUTE, executed via ROAM_EXECUTE) to stay under
 // provider tool-count limits (e.g. OpenAI's 128-tool cap).
 
+import { extractAuditableSkillLines, summariseSkillTokens } from "./parse-utils.js";
+
 let deps = {};
 let roamNativeToolsCache = null;
 
@@ -13,7 +15,12 @@ export const ROAM_CORE_TOOLS = new Set([
   "roam_search", "roam_semantic_search", "roam_create_block", "roam_update_block",
   "roam_get_page", "roam_get_block_children", "roam_get_daily_page",
   "roam_open_page", "roam_delete_block", "roam_create_blocks",
-  "roam_create_page", "roam_web_fetch"
+  "roam_create_page", "roam_web_fetch",
+  // Skill-facing COS tools. These must be DIRECT: a skill's `Tools:` whitelist
+  // strips ROAM_ROUTE/ROAM_EXECUTE, so a routed tool named in a whitelist is
+  // unreachable — the agent loop's `startsWith("cos_")` bypass only admits
+  // tools already in the array, it cannot add a routed one to it.
+  "cos_get_skill", "cos_count_skill_tokens", "cos_write_draft_skill"
 ]);
 
 const ROAM_TOOL_CATEGORIES = {
@@ -1293,6 +1300,53 @@ export function getRoamNativeTools() {
             ? `BINDING PRE-FLIGHT REQUIREMENTS for skill "${entry.title}": Your final output MUST satisfy ALL of the following before responding. These are not suggestions — treat them as the acceptance tests for this run.\n${acceptanceCriteria.map(a => `- ${a}`).join("\n")}`
             : undefined
         });
+      }
+    },
+    {
+      name: "cos_count_skill_tokens",
+      isMutating: false,
+      description: "Deterministically count the token cost of every auditable guardrail line in a skill. Returns each line with a stable id and its exact token count, plus the exact total. Structural fields (Triggers, Sources, Tools, Tier, Budget, Iterations, Models) are excluded — the extension parses those, so they are never auditable. Pass remove_line_ids to get the exact removable total and percentage. NEVER estimate or sum token counts yourself: quote the numbers this tool returns.",
+      input_schema: {
+        type: "object",
+        properties: {
+          skill_name: {
+            type: "string",
+            description: "Name of the skill to count (must match a name from the Available Skills list)."
+          },
+          remove_line_ids: {
+            type: "array",
+            items: { type: "number" },
+            description: "Optional. Line ids you classified as Remove. Returns exact removable_tokens and percentage for those lines."
+          }
+        },
+        required: ["skill_name"]
+      },
+      execute: async (args = {}) => {
+        const name = String(args?.skill_name || "").trim();
+        if (!name) return JSON.stringify({ error: "skill_name is required" });
+        const entry = await deps.findSkillEntryByName(name, { force: false });
+        if (!entry) {
+          const entries = await deps.getSkillEntries({ force: false });
+          return JSON.stringify({ error: `Skill "${name}" not found. Available: ${entries.map((e) => e.title).join(", ")}` });
+        }
+        const lines = extractAuditableSkillLines(entry.childrenContent || "");
+        const removeIds = Array.isArray(args.remove_line_ids) ? args.remove_line_ids : null;
+        const summary = summariseSkillTokens(lines, removeIds || []);
+        const result = {
+          skill_name: entry.title,
+          total_tokens: summary.total_tokens,
+          line_count: summary.line_count,
+          lines
+        };
+        if (removeIds) {
+          result.removable_tokens = summary.removable_tokens;
+          result.percentage = summary.percentage;
+          result.removed_line_count = summary.removed_line_count;
+          const known = new Set(lines.map((l) => l.id));
+          const unknown = removeIds.filter((id) => !known.has(Number(id)));
+          if (unknown.length) result.unknown_line_ids = unknown;
+        }
+        return JSON.stringify(result);
       }
     },
     {

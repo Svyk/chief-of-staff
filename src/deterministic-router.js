@@ -852,14 +852,25 @@ function resolveToolWhitelist(parsedToolNames, allToolSchemas, localMcpTools, re
       continue;
     }
 
-    // COS extension-internal tools (cos_get_skill, cos_write_draft_skill, …) are
-    // ALWAYS available — the agent loop unconditionally admits any "cos_"-prefixed
-    // tool regardless of the whitelist (see agent-loop.js). They aren't in the
-    // schema list passed here, so resolve them directly to avoid a spurious
-    // "not currently available" warning and an incomplete whitelist. (#136c)
+    // COS tools defined in roam-native-tools.js. The skill-facing ones are in
+    // ROAM_CORE_TOOLS and already resolved via schemaByName above; the rest are
+    // routed, so a skill naming one needs the Roam meta-tools to reach it.
+    // Do NOT blanket-whitelist every cos_ name: the agent loop's
+    // `startsWith("cos_")` bypass only admits tools already in the tools array,
+    // so whitelisting a name that doesn't exist there silently yields nothing —
+    // which is exactly how a genuine "not available" warning got suppressed and
+    // left `cos_get_skill` uncallable for every skill run. (#136c, corrected)
     if (name.startsWith("cos_")) {
-      whitelist.add(name);
-      continue;
+      const native = (deps.getRoamNativeTools?.() || []).find(t => t.name === name);
+      if (native) {
+        whitelist.add(name);
+        if (!native._isDirect) {
+          whitelist.add("ROAM_ROUTE");
+          whitelist.add("ROAM_EXECUTE");
+        }
+        continue;
+      }
+      // Unknown cos_ name — fall through to the warning below. It's a typo.
     }
 
     // Routed Roam tools (roam_batch_write, roam_find_todos, etc.) aren't in allToolSchemas
@@ -1120,6 +1131,9 @@ ${systemPromptSuffix}${mcpToolHintsSection}`;
     powerMode: skillPowerMode,
     tier: skillTier,
     gatheringGuard,
+    // Lets the loop tell "loaded a skill to run it" from "loaded a skill to
+    // audit it" when cos_get_skill fires mid-run.
+    activeSkillName: skill.title,
     toolWhitelist: toolWhitelist || undefined,
     ...(skillMaxIterations ? { maxIterations: skillMaxIterations } : {}),
     ...(parsedBudget.budgetUsd ? { skillBudgetUsd: parsedBudget.budgetUsd } : {}),
