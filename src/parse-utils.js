@@ -119,6 +119,63 @@ export function buildRoamTagString(rawTags) {
   return out.join(" ");
 }
 
+// ── Skill token accounting (#119) ───────────────────────────────────────────
+//
+// Models cannot reliably estimate or sum token counts: three live Skill
+// Assumption Audit runs of the same skill reported totals of 351, 540 and 612
+// against true sums of 627, 520 and 617. The counts must come from code.
+
+/** Rough token estimate for English prose: ~4 characters per token. */
+export function estimateTokens(text) {
+  const s = String(text || "").trim();
+  return s ? Math.max(1, Math.round(s.length / 4)) : 0;
+}
+
+/**
+ * Structural fields are parsed by the extension's router, whitelist and budget
+ * machinery — they are not model-read guardrails, and deleting one breaks skill
+ * invocation. Excluded from auditable lines so an audit can never propose
+ * removing them. (The prose constraint saying so was ignored once already.)
+ */
+const SKILL_STRUCTURAL_FIELD_RE = /^\s*-?\s*(?:Triggers?|Sources?|Tools?|Tier|Budget|Iterations|Models)\s*(?::|—)/i;
+
+/**
+ * Split a skill's `childrenContent` (one line per block) into auditable
+ * guardrail lines with stable ids and deterministic token costs.
+ * Returns [{ id, text, tokens }] — ids are 1-based and stable for a given skill.
+ */
+export function extractAuditableSkillLines(childrenContent) {
+  const lines = [];
+  let id = 0;
+  for (const raw of String(childrenContent || "").split("\n")) {
+    if (!raw.trim()) continue;
+    if (SKILL_STRUCTURAL_FIELD_RE.test(raw)) continue;
+    const text = raw.replace(/^\s*[-*•]\s*/, "").trim();
+    if (!text) continue;
+    lines.push({ id: ++id, text, tokens: estimateTokens(text) });
+  }
+  return lines;
+}
+
+/**
+ * Exact totals for an audit. `removeIds` are the line ids classified Remove.
+ * percentage is removable/total to one decimal place.
+ */
+export function summariseSkillTokens(lines, removeIds = []) {
+  const safeLines = Array.isArray(lines) ? lines : [];
+  const removeSet = new Set((Array.isArray(removeIds) ? removeIds : []).map(Number));
+  const total = safeLines.reduce((sum, l) => sum + (l?.tokens || 0), 0);
+  const removed = safeLines.filter((l) => removeSet.has(l?.id));
+  const removable = removed.reduce((sum, l) => sum + (l?.tokens || 0), 0);
+  return {
+    total_tokens: total,
+    removable_tokens: removable,
+    percentage: total > 0 ? Math.round((removable / total) * 1000) / 10 : 0,
+    line_count: safeLines.length,
+    removed_line_count: removed.length,
+  };
+}
+
 /**
  * Strip leading conversational fillers ("no,", "ok", "actually", "yes", …) from
  * a message so skill-invocation phrasing still routes after a filler prefix.

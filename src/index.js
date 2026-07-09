@@ -4461,17 +4461,34 @@ async function bootstrapSkillsPage({ silent = false } = {}) {
       steps: [
         "Audit an existing skill's guardrails for continued value. Classify every constraint, rule, and prescriptive instruction as a stale assumption (workaround for a model weakness that no longer exists), an earned constraint (caught a real, documented failure), or a domain constraint (knowledge no model can derive), then recommend remove / keep / annotate with estimated token savings. Run after each model release or tier change. Distinct from Skill Auditor (structural quality) and skill optimisation (pass rate): this audits whether existing guardrails still earn their tokens.",
         "Triggers: \"run the Skill Assumption Audit skill on [skill]\" (canonical — routes deterministically with whitelist + tier), \"skill assumption audit\", \"audit skill assumptions\", \"assumption audit for [skill]\", \"audit guardrails\", \"which guardrails are stale\", \"are my skills carrying dead weight\", \"new model shipped — audit my skills\"",
-        "Sources: cos_get_skill(\"<skill name>\") — the full definition under audit. roam_get_page(\"Chief of Staff/Corrections\") — evidence a guardrail earned its place (failures it stopped, or failures recurring despite it). roam_get_page(\"Chief of Staff/Review Queue\") — eval failures a guardrail addresses. The skill index (already in the system prompt) — to enumerate candidates when the user says \"audit all my skills\".",
-        "Tools: cos_get_skill, roam_get_page, cos_write_draft_skill",
+        "Sources: cos_count_skill_tokens(\"<skill name>\") — the authoritative list of auditable guardrail lines, each with a stable id and its exact token cost. cos_get_skill(\"<skill name>\") — the full definition under audit. roam_get_page(\"Chief of Staff/Corrections\") — evidence a guardrail earned its place (failures it stopped, or failures recurring despite it). roam_get_page(\"Chief of Staff/Review Queue\") — eval failures a guardrail addresses. The skill index (already in the system prompt) — to enumerate candidates when the user says \"audit all my skills\".",
+        "Tools: cos_count_skill_tokens, cos_get_skill, roam_get_page, cos_write_draft_skill",
         "Tier: power",
         "Budget: $0.15",
         "Iterations: 6",
         "Classification rubric — apply to EVERY imperative or prohibitive line in the skill (Constraints quadrants, Rules, \"do not\" clauses, formatting mandates, fallback prescriptions). STALE ASSUMPTION — compensates for a model weakness current models no longer have. Tells: pre-emptive rationalisation phrasing (\"you may be tempted to…\"), output-shape babysitting an older model needed, duplication of what the system prompt or approval gating already enforces. Transfer test (from SkillOpt): would this rule still earn its tokens if the model swapped between Claude, GPT, and Gemini? Value that exists only for one specific model marks a stale candidate. EARNED CONSTRAINT — caught a real, documented failure. REQUIRES A CITATION: quote the specific Corrections or Review Queue entry (with its block ref). If you cannot cite one, the line is NOT Earned — reclassify it as Domain (if it encodes knowledge no model can derive) or Annotate. DOMAIN CONSTRAINT — knowledge no model can derive: user-specific routing conventions, tool availability quirks, output contracts, data-safety rules. TIE-BREAK RULES, apply in order: (1) Absence of evidence is never evidence of staleness — a line may be load-bearing and simply never have been tested; an evidence-free line can never be classified Stale on that basis alone. (2) If a line could plausibly sit in two buckets, or you would classify it differently on a second reading, it is Annotate. (3) Reserve Remove for lines you would actively defend deleting.",
-        "Instructions: 1. Identify the target skill. If the user named one, load it with cos_get_skill; if they said \"all\", list the skill index and ask which to start with — audit one skill per run. 2. Enumerate every guardrail line verbatim and estimate its token cost (chars ÷ 4). 3. Read Corrections and Review Queue; match entries to this skill by name or source tag — this is the evidence base. 4. Classify each guardrail using the rubric, with a one-line justification and an evidence reference where one exists. 5. Produce the report (format below). 6. If the user wants the removals applied, write a \"(Draft)\" copy via cos_write_draft_skill — never edit the live skill.",
+        "Instructions: 1. Identify the target skill. If the user named one, use it; if they said \"all\", list the skill index and ask which to start with — audit one skill per run. 2. Call cos_count_skill_tokens(skill_name). It returns every auditable guardrail line with a stable id and its exact token cost, plus the exact total. These numbers are authoritative: quote them, never estimate or re-derive them. Structural fields are already excluded, so every line it returns is fair game and every line it omits is off-limits. 3. Read Corrections and Review Queue; match entries to this skill by name or source tag — this is the evidence base. 4. Classify each returned line using the rubric, with a one-line justification and an evidence reference where one exists. 5. Call cos_count_skill_tokens again with remove_line_ids set to the ids you classified Remove. It returns the exact removable_tokens, total_tokens and percentage. 6. Produce the report (format below) using those returned numbers verbatim — do NOT add anything up yourself. 7. If the user wants the removals applied, write a \"(Draft)\" copy via cos_write_draft_skill — never edit the live skill.",
         "Constraints: Must Do — quote every guardrail verbatim in the report; give a per-item justification; include the token estimate. Must Not Do — never modify the live skill (draft copy only); never classify data-safety rules (approval gating, never-fabricate, reversibility, UID validation) as stale regardless of evidence — they are domain constraints by definition; never classify the structural fields (Triggers, Sources, Tools, Tier, Budget, Iterations) at all — they are parsed by the extension's router, whitelist, and budget machinery, not read by the model as guardrails, and removing them breaks skill invocation. Escalate — if more than half of a skill classifies as stale, stop and ask whether the skill is still needed at all before recommending line-level removals.",
-        "Acceptance: every guardrail in the audited skill appears in exactly one classification bucket. Every \"remove\" recommendation has a one-line justification. Every \"Keep (earned)\" item cites a specific evidence entry. The closing total Y equals the arithmetic sum of the per-item token estimates, and X equals the sum of the Remove items — state both sums explicitly so they can be checked. No live skill was modified.",
-        "Rubric: report quotes guardrails verbatim. Recommendations use only remove / keep / annotate. Every Keep (earned) item carries an evidence citation. The closing total equals the sum of the itemised token estimates. Draft copy written only after explicit user confirmation.",
-        "Output — chat panel only (no DNP write): one section per verdict — Remove (stale), Annotate (plausible-stale), Keep (earned), Keep (domain) — each item as: verbatim guardrail, ~tokens, one-line justification, evidence ref or \"no evidence found\". Then ADD THE NUMBERS UP: Y = sum of every per-item estimate across all four buckets; X = sum of the Remove items only. Close with: \"~X of this skill's ~Y tokens are removable (Z%). Want a (Draft) copy with removals applied?\" — where X and Y are those sums, not fresh estimates. A percentage that doesn't follow from the itemised numbers is a failed run.",
+        {
+          text: "Acceptance:",
+          children: [
+            "cos_count_skill_tokens was called and every line it returned appears in exactly one classification bucket.",
+            "Every Remove item has a one-line justification.",
+            "Every Keep (earned) item cites a specific Corrections or Review Queue entry.",
+            "The reported token totals and percentage are the values returned by cos_count_skill_tokens, not self-computed.",
+            "No live skill was modified."
+          ]
+        },
+        {
+          text: "Rubric:",
+          children: [
+            "The report quotes each guardrail verbatim.",
+            "Recommendations use only remove, keep, or annotate.",
+            "Each item's token count matches the count returned by cos_count_skill_tokens.",
+            "A draft copy was written only after explicit user confirmation."
+          ]
+        },
+        "Output — chat panel only (no DNP write): one section per verdict — Remove (stale), Annotate (plausible-stale), Keep (earned), Keep (domain) — each item as: line id, verbatim guardrail, its token count from the tool, a one-line justification, and an evidence ref or \"no evidence found\". Close with the exact figures returned by the second cos_count_skill_tokens call: \"X of this skill's Y tokens are removable (Z%). Want a (Draft) copy with removals applied?\" Do not compute X, Y or Z yourself — three earlier versions of this skill misreported the total every single time.",
         "Fallback: if Corrections or Review Queue is missing or empty, proceed with the rubric alone, mark every item's evidence as \"none available\", and bias toward annotate over remove — no evidence cuts both ways."
       ]
     },
@@ -4495,7 +4512,19 @@ async function bootstrapSkillsPage({ silent = false } = {}) {
     const skill = starterSkills[index];
     const parentUid = await createRoamBlock(pageUid, String(skill.name || "").trim(), index);
     for (let childIndex = 0; childIndex < skill.steps.length; childIndex += 1) {
-      await createRoamBlock(parentUid, skill.steps[childIndex], childIndex);
+      // A step is either a plain string, or { text, children: [...] } for fields
+      // whose parser reads indented children as separate items (Acceptance,
+      // Rubric) — one criterion per block keeps eval checks atomic.
+      const step = skill.steps[childIndex];
+      if (typeof step === "string") {
+        await createRoamBlock(parentUid, step, childIndex);
+        continue;
+      }
+      const stepUid = await createRoamBlock(parentUid, step.text, childIndex);
+      if (!stepUid) continue;
+      for (let grandIndex = 0; grandIndex < (step.children || []).length; grandIndex += 1) {
+        await createRoamBlock(stepUid, step.children[grandIndex], grandIndex);
+      }
     }
   }
   invalidateSkillsPromptCache();

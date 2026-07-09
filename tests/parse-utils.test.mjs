@@ -9,6 +9,9 @@ import {
   stripConversationalPrefix,
   extractSkillTriggerPhrases,
   matchSkillByTriggerPhrase,
+  estimateTokens,
+  extractAuditableSkillLines,
+  summariseSkillTokens,
 } from "../src/parse-utils.js";
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -431,4 +434,85 @@ test("matchSkillByTriggerPhrase requires the phrase to end on a word boundary", 
 test("matchSkillByTriggerPhrase rejects a connector-lookalike word", () => {
   // "online"/"office" begin with on/of but aren't connectors
   assert.equal(matchSkillByTriggerPhrase("catch me up online tomorrow", ENTRIES), null);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Skill token accounting (#119 deterministic counter)
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("estimateTokens approximates 4 chars per token, min 1 for non-empty", () => {
+  assert.equal(estimateTokens(""), 0);
+  assert.equal(estimateTokens("   "), 0);
+  assert.equal(estimateTokens(null), 0);
+  assert.equal(estimateTokens("abcd"), 1);
+  assert.equal(estimateTokens("a"), 1);           // min 1, never 0 for real text
+  assert.equal(estimateTokens("x".repeat(100)), 25);
+});
+
+const SKILL_CHILDREN = [
+  "- Description: audit a skill's guardrails.",
+  '- Triggers: "audit skill assumptions", "audit guardrails"',
+  "- Sources: cos_get_skill, roam_get_page",
+  "- Tools: cos_get_skill, roam_get_page",
+  "- Tier: power",
+  "- Budget: $0.15",
+  "- Iterations: 6",
+  "- Models: +Anthropic",
+  "- Never fabricate activity.",
+  "  - Mark inferences with [INFERRED].",
+].join("\n");
+
+test("extractAuditableSkillLines excludes every structural field", () => {
+  const lines = extractAuditableSkillLines(SKILL_CHILDREN);
+  const texts = lines.map(l => l.text);
+  for (const banned of ["Triggers", "Sources", "Tools", "Tier", "Budget", "Iterations", "Models"]) {
+    assert.ok(!texts.some(t => t.startsWith(banned + ":")), `${banned} must not be auditable`);
+  }
+  assert.equal(lines.length, 3); // description + 2 guardrails
+});
+
+test("extractAuditableSkillLines strips bullets/indent and assigns stable 1-based ids", () => {
+  const lines = extractAuditableSkillLines(SKILL_CHILDREN);
+  assert.deepEqual(lines.map(l => l.id), [1, 2, 3]);
+  assert.equal(lines[1].text, "Never fabricate activity.");
+  assert.equal(lines[2].text, "Mark inferences with [INFERRED].");   // nested child, indent stripped
+  assert.ok(lines.every(l => l.tokens > 0));
+});
+
+test("extractAuditableSkillLines handles em-dash structural separators and blank input", () => {
+  assert.equal(extractAuditableSkillLines("- Tier — power\n- Real guardrail").length, 1);
+  assert.deepEqual(extractAuditableSkillLines(""), []);
+  assert.deepEqual(extractAuditableSkillLines(null), []);
+});
+
+test("summariseSkillTokens returns exact totals — the whole point of the tool", () => {
+  const lines = [
+    { id: 1, text: "a", tokens: 24 },
+    { id: 2, text: "b", tokens: 24 },
+    { id: 3, text: "c", tokens: 227 },
+    { id: 4, text: "d", tokens: 342 },
+  ];
+  const s = summariseSkillTokens(lines, [1, 2]);
+  assert.equal(s.total_tokens, 617);        // the real sum the model reported as 612
+  assert.equal(s.removable_tokens, 48);
+  assert.equal(s.percentage, 7.8);
+  assert.equal(s.line_count, 4);
+  assert.equal(s.removed_line_count, 2);
+});
+
+test("summariseSkillTokens handles no removals, unknown ids, and empty input", () => {
+  const lines = [{ id: 1, text: "a", tokens: 10 }];
+  assert.equal(summariseSkillTokens(lines, []).removable_tokens, 0);
+  assert.equal(summariseSkillTokens(lines, []).percentage, 0);
+  assert.equal(summariseSkillTokens(lines, [99]).removable_tokens, 0);  // unknown id contributes nothing
+  const empty = summariseSkillTokens([], [1]);
+  assert.equal(empty.total_tokens, 0);
+  assert.equal(empty.percentage, 0);        // no divide-by-zero
+  assert.equal(summariseSkillTokens(null, null).total_tokens, 0);
+});
+
+test("summariseSkillTokens coerces string ids and rounds percentage to 1dp", () => {
+  const lines = [{ id: 1, text: "a", tokens: 1 }, { id: 2, text: "b", tokens: 2 }];
+  assert.equal(summariseSkillTokens(lines, ["1"]).removable_tokens, 1);
+  assert.equal(summariseSkillTokens(lines, [1]).percentage, 33.3);  // 1/3
 });
