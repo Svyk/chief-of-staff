@@ -164,9 +164,14 @@ export function extractSkillTriggerPhrases(skillContent) {
 /**
  * Match a message against skills' own declared trigger phrases, for when the
  * explicit "run the X skill" phrasing wasn't used (e.g. "audit skill
- * assumptions for Catch Me Up"). Anchored: the message must EQUAL a phrase or
- * START WITH one, so incidental mentions don't fire. Longest phrase wins; the
- * remainder (minus a leading connector/article) becomes the target. (#136a)
+ * assumptions for Catch Me Up"). (#136a)
+ *
+ * A phrase matches ONLY when it is the entire message, or is followed by an
+ * explicit connector (`on`/`for`/`of`/`about`) or a colon, then a target.
+ * A bare continuation must not match: trigger phrases are often generic
+ * two-word openers ("what changed"), so "what changed in the Roam API" is a
+ * question to answer, not a skill to run. Longest phrase wins; the remainder,
+ * minus a leading article, becomes the target.
  *
  * @param {string} userMessage
  * @param {Array<{title:string, content:string}>} skillEntries
@@ -185,11 +190,14 @@ export function matchSkillByTriggerPhrase(userMessage, skillEntries) {
       let target = null;
       if (lc === p) {
         target = "";
-      } else if (lc.startsWith(p + " ")) {
-        target = raw.slice(p.length).trim()
-          .replace(/^(?:for|on|of|about|to|:)\s+/i, "")
-          .replace(/^(?:the|my|a)\s+/i, "")
-          .trim();
+      } else if (lc.startsWith(p)) {
+        const rest = raw.slice(p.length);
+        // Phrase must end on a word boundary ("catch me upon …" is not a match),
+        // then carry an explicit connector or colon before the target.
+        if (/^[\s:]/.test(rest)) {
+          const m = rest.match(/^\s*(?::\s*|(?:on|for|of|about)\s+)(.+)$/i);
+          if (m) target = m[1].trim().replace(/^(?:the|my|a)\s+/i, "").trim();
+        }
       }
       if (target !== null && (!best || p.length > best.phraseLen)) {
         best = { skillName: title, phraseLen: p.length, target };

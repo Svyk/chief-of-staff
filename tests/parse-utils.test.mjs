@@ -399,3 +399,36 @@ test("matchSkillByTriggerPhrase returns null when nothing matches", () => {
   assert.equal(matchSkillByTriggerPhrase("", ENTRIES), null);
   assert.equal(matchSkillByTriggerPhrase("weekly review", null), null);
 });
+
+// ── Hijack guards: a trigger phrase must be the whole message, or be followed
+//    by an explicit connector. General questions that merely *begin* with a
+//    generic trigger phrase must fall through to the agent loop. (#136a hardening)
+
+test("matchSkillByTriggerPhrase does NOT hijack a general question starting with a generic trigger", () => {
+  // "what changed" is a real 2-word Catch Me Up trigger — but this is a question
+  // about the Roam API, not a request to run the skill.
+  assert.equal(matchSkillByTriggerPhrase("what changed in the Roam API this year?", ENTRIES), null);
+  assert.equal(matchSkillByTriggerPhrase("what changed since Roam shipped semantic search", ENTRIES), null);
+});
+
+test("matchSkillByTriggerPhrase still matches phrase + explicit connector", () => {
+  const r = matchSkillByTriggerPhrase("catch me up on the Roam API", ENTRIES);
+  assert.equal(r.skillName, "Catch Me Up");
+  assert.equal(r.targetText, "Roam API");
+});
+
+test("matchSkillByTriggerPhrase accepts a colon separator", () => {
+  const r = matchSkillByTriggerPhrase("audit skill assumptions: Weekly Review", ENTRIES);
+  assert.equal(r.skillName, "Skill Assumption Audit");
+  assert.equal(r.targetText, "Weekly Review");
+});
+
+test("matchSkillByTriggerPhrase requires the phrase to end on a word boundary", () => {
+  // "catch me upon the API" must not match the "catch me up" trigger
+  assert.equal(matchSkillByTriggerPhrase("catch me upon the API", ENTRIES), null);
+});
+
+test("matchSkillByTriggerPhrase rejects a connector-lookalike word", () => {
+  // "online"/"office" begin with on/of but aren't connectors
+  assert.equal(matchSkillByTriggerPhrase("catch me up online tomorrow", ENTRIES), null);
+});
