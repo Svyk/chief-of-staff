@@ -1131,6 +1131,9 @@ ${systemPromptSuffix}${mcpToolHintsSection}`;
     powerMode: skillPowerMode,
     tier: skillTier,
     gatheringGuard,
+    // Lets the loop tell "loaded a skill to run it" from "loaded a skill to
+    // audit it" when cos_get_skill fires mid-run.
+    activeSkillName: skill.title,
     toolWhitelist: toolWhitelist || undefined,
     ...(skillMaxIterations ? { maxIterations: skillMaxIterations } : {}),
     ...(parsedBudget.budgetUsd ? { skillBudgetUsd: parsedBudget.budgetUsd } : {}),

@@ -218,7 +218,11 @@ export async function runAgentLoop(userMessage, options = {}) {
     carryoverWriteReplayGuard = null,
     toolWhitelist = null,
     skillBudgetUsd = null,
-    toolResultCache = null
+    toolResultCache = null,
+    // Name of the skill this run is EXECUTING, when invoked via the deterministic
+    // skill path. Used to tell "loading a skill to run it" apart from "loading a
+    // skill to inspect it" — see the cos_get_skill gathering-guard branch below.
+    activeSkillName = null
   } = options;
   let maxIterations = initialMaxIterations;
   let gatheringGuard = initialGatheringGuard;
@@ -1106,39 +1110,58 @@ export async function runAgentLoop(userMessage, options = {}) {
             toolStaleResults.set(rateLimitKey, { fingerprint, count: 1 });
           }
         }
-        // Dynamic gathering guard activation when LLM fetches a skill
+        // Dynamic gathering guard activation when the LLM fetches a skill in order
+        // to EXECUTE it (the freestyle path, where no skill was pre-selected).
         if (toolCall.name === "cos_get_skill" && result && !result.error && !gatheringGuard) {
           const skillText = typeof result === "string" ? result : deps.safeJsonStringify(result, 10000);
           let skillContent = skillText;
+          let fetchedSkillName = null;
           try {
             const parsed = JSON.parse(skillText);
             if (parsed?.content) skillContent = parsed.content;
+            if (parsed?.skill_name) fetchedSkillName = String(parsed.skill_name);
           } catch (_) { /* use raw text */ }
-          deps.debugLog("[Chief flow] Gathering guard skillText preview:", String(skillContent).slice(0, 500));
-          // Use unfiltered tool schemas so category-gated tools (cos_cron_*, roam_bt_*, etc.)
-          // are recognised as valid sources even when filtered out of the active tool set.
-          // Also include ALL MCP tools (routed servers) so namespaced names are recognised.
-          const allToolSchemas = await deps.getAvailableToolSchemas();
-          const knownToolNames = new Set(
-            (Array.isArray(allToolSchemas) ? allToolSchemas : []).map(t => t?.name).filter(Boolean)
-          );
-          for (const t of getLocalMcpTools()) knownToolNames.add(t.name);
-          for (const t of getRemoteMcpTools()) knownToolNames.add(t.name);
-          // Include Composio installed tool slugs (mid-loop)
-          const midLoopRegistry = getToolkitSchemaRegistry();
-          for (const tk of Object.values(midLoopRegistry.toolkits || {})) {
-            for (const slug of Object.keys(tk.tools || {})) knownToolNames.add(slug);
-          }
-          const expectedSources = deps.parseSkillSources(skillContent, knownToolNames);
-          deps.debugLog("[Chief flow] Gathering guard parsed sources:", expectedSources.length, expectedSources);
-          if (expectedSources.length > 0) {
-            gatheringGuard = { expectedSources, source: "mid-loop" };
-            // Dynamically boost iteration cap so skills with many sources can complete.
-            // Need: remaining sources + 1 synthesis + 1 buffer for retries.
-            const neededIterations = index + 1 + expectedSources.length + 2;
-            if (neededIterations > maxIterations && neededIterations <= deps.MAX_AGENT_ITERATIONS_SKILL) {
-              deps.debugLog(`[Chief flow] Gathering guard boosting maxIterations: ${maxIterations} → ${neededIterations} (${expectedSources.length} sources at iteration ${index + 1})`);
-              maxIterations = neededIterations;
+
+          // A run that is already executing a skill and fetches a DIFFERENT one is
+          // inspecting it — auditing, reviewing, redesigning — not running it.
+          // Adopting the inspected skill's Sources as this run's required calls
+          // demands tools this run may not even be allowed to touch: the Skill
+          // Assumption Audit stalled on Catch Me Up's bt_search, which its own
+          // Tools whitelist forbids. Note: must not `continue` here — the tool
+          // result still needs its trace entry and live-data-guard bookkeeping.
+          const inspectingAnotherSkill =
+            Boolean(activeSkillName) && Boolean(fetchedSkillName) && fetchedSkillName !== activeSkillName;
+          if (inspectingAnotherSkill) {
+            deps.debugLog(
+              `[Chief flow] Gathering guard: skipping "${fetchedSkillName}" sources — inspected by "${activeSkillName}", not executed.`
+            );
+          } else {
+            deps.debugLog("[Chief flow] Gathering guard skillText preview:", String(skillContent).slice(0, 500));
+            // Use unfiltered tool schemas so category-gated tools (cos_cron_*, roam_bt_*, etc.)
+            // are recognised as valid sources even when filtered out of the active tool set.
+            // Also include ALL MCP tools (routed servers) so namespaced names are recognised.
+            const allToolSchemas = await deps.getAvailableToolSchemas();
+            const knownToolNames = new Set(
+              (Array.isArray(allToolSchemas) ? allToolSchemas : []).map(t => t?.name).filter(Boolean)
+            );
+            for (const t of getLocalMcpTools()) knownToolNames.add(t.name);
+            for (const t of getRemoteMcpTools()) knownToolNames.add(t.name);
+            // Include Composio installed tool slugs (mid-loop)
+            const midLoopRegistry = getToolkitSchemaRegistry();
+            for (const tk of Object.values(midLoopRegistry.toolkits || {})) {
+              for (const slug of Object.keys(tk.tools || {})) knownToolNames.add(slug);
+            }
+            const expectedSources = deps.parseSkillSources(skillContent, knownToolNames);
+            deps.debugLog("[Chief flow] Gathering guard parsed sources:", expectedSources.length, expectedSources);
+            if (expectedSources.length > 0) {
+              gatheringGuard = { expectedSources, source: "mid-loop" };
+              // Dynamically boost iteration cap so skills with many sources can complete.
+              // Need: remaining sources + 1 synthesis + 1 buffer for retries.
+              const neededIterations = index + 1 + expectedSources.length + 2;
+              if (neededIterations > maxIterations && neededIterations <= deps.MAX_AGENT_ITERATIONS_SKILL) {
+                deps.debugLog(`[Chief flow] Gathering guard boosting maxIterations: ${maxIterations} → ${neededIterations} (${expectedSources.length} sources at iteration ${index + 1})`);
+                maxIterations = neededIterations;
+              }
             }
           }
         }
