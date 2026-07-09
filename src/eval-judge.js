@@ -13,6 +13,8 @@ export function initEvalJudge(injected) { deps = injected; }
 
 const EVAL_PROMPT_CHAR_LIMIT = 300;
 const EVAL_RESPONSE_CHAR_LIMIT = 500;
+// Skill evals carry rubric criteria about the full output, so they need to see it.
+const RUBRIC_RESPONSE_CHAR_LIMIT = 6000;
 const EVAL_MAX_OUTPUT_TOKENS = 350;
 const EVAL_DIMENSIONS = ["task_completion", "factual_grounding", "safety"];
 
@@ -197,14 +199,17 @@ function selectJudgeProvider(runProvider) {
 
 // ── Eval Payload Building ─────────────────────────────────────────────────
 
-function buildEvalPayload(trace, userPrompt, responseText, options = {}) {
+export function buildEvalPayload(trace, userPrompt, responseText, options = {}) {
   const responseCharLimit = options.responseCharLimit || EVAL_RESPONSE_CHAR_LIMIT;
   const fullPrompt = String(userPrompt || "");
   const fullResponse = String(responseText || "");
   const prompt = fullPrompt.slice(0, EVAL_PROMPT_CHAR_LIMIT);
   const response = fullResponse.slice(0, responseCharLimit);
   const promptTruncated = fullPrompt.length > EVAL_PROMPT_CHAR_LIMIT;
-  const responseTruncated = fullResponse.length > EVAL_RESPONSE_CHAR_LIMIT;
+  // Compare against the EFFECTIVE limit, not the default constant. Otherwise a
+  // 900-char response evaluated with a 3,000-char skill limit is labelled a
+  // "truncated preview", and the judge marks a complete answer as incomplete.
+  const responseTruncated = fullResponse.length > responseCharLimit;
 
   const toolSummary = (trace.toolCalls || []).map(tc => {
     const status = tc.error ? "error" : "success";
@@ -472,7 +477,12 @@ export async function evaluateAgentRun(trace, userPrompt, responseText, options 
 
     // Build eval payload
     // Skill evals with rubric need more response context to verify section-level criteria
-    const responseCharLimit = rubricChecks?.length > 0 ? 3000 : EVAL_RESPONSE_CHAR_LIMIT;
+    // Rubric criteria describe properties of the WHOLE artifact ("the closing
+    // total equals the sum of the itemised estimates"), so the judge must see
+    // the whole thing. At 3,000 chars a long skill report was cut before its
+    // summary, making tail-referencing criteria unfalsifiable — they failed
+    // every run and queued false failures. ~750 extra mini-tier input tokens.
+    const responseCharLimit = rubricChecks?.length > 0 ? RUBRIC_RESPONSE_CHAR_LIMIT : EVAL_RESPONSE_CHAR_LIMIT;
     let evalPayload = buildEvalPayload(trace, userPrompt, responseText, { responseCharLimit });
 
     // Append skill-specific rubric criteria to the payload (not the system prompt — keeps caching stable)
