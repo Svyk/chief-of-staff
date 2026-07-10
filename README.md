@@ -98,7 +98,7 @@ Open **Settings > Chief of Staff** and fill in:
 - **Response Verbosity** — controls how verbose assistant responses are and how many output tokens are allowed per call. `concise` (1,200 tokens, brief bullet-point style), `standard` (2,500 tokens, default), or `detailed` (4,096 tokens, thorough explanations). Only affects the mini tier — power and ludicrous tiers have their own token budgets. With prompt caching reducing input costs, output tokens become the dominant expense, so this setting gives you direct control over the main remaining cost lever.
 - **Debug Logging** — enable verbose console output for troubleshooting
 - **Dry Run** — one-shot toggle that simulates the next mutating tool call without writing anything (auto-disables after one use)
-- **Ludicrous mode failover** — allow escalation to the most expensive models (Opus 4.8 / GPT-5.5) when all power-tier providers fail
+- **Ludicrous mode failover** — allow escalation to the most expensive models (Opus 4.8 / GPT-5.6 Sol) when all power-tier providers fail
 - **Hide COS Pages from Linked References** — automatically filters Chief of Staff namespace pages out of linked references on all non-COS pages. Enabled by default.
 - **Use Linked Dates in CoS Logs** — when enabled, internal CoS log entries (audit log, usage stats, eval scores, corrections, graph hygiene, skill-optimize) prefix each line with a `[[Linked Date]]`. Disable to write plain dates instead — keeps Daily Notes pages from accumulating linked references on mobile. Enabled by default.
 - **Staleness Warning Threshold (days)** — how long a skill or scheduled job can go without being reviewed before it's flagged. A startup toast (debounced to once per 24 hours) lists stale items, and `staleness report` returns the same list on demand. Default `30`. Set to `0` to disable the warnings entirely (the report still works).
@@ -108,8 +108,8 @@ Default models by tier:
 | Tier | Anthropic | OpenAI | Gemini | Mistral | Groq | OpenAI-Codex (subscription) |
 |---|---|---|---|---|---|---|
 | Mini (default) | claude-haiku-4-5 | gpt-5.4-mini | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile | gpt-5.4-mini |
-| Power (`/power`) | claude-sonnet-5 | gpt-5.4 | gemini-3.5-flash | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-terra |
-| Ludicrous (`/ludicrous`) | claude-opus-4-8 | gpt-5.5 | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-sol |
+| Power (`/power`) | claude-sonnet-5 | gpt-5.6-terra | gemini-3.5-flash | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-terra |
+| Ludicrous (`/ludicrous`) | claude-opus-4-8 | gpt-5.6-sol | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-sol |
 
 #### Custom OpenAI-compatible providers (LM Studio, Ollama, OpenRouter, vLLM, …)
 
