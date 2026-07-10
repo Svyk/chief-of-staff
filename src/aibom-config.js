@@ -22,19 +22,29 @@ export const DEFAULT_LLM_MODELS = {
 };
 
 export const POWER_LLM_MODELS = {
-  anthropic: "claude-sonnet-4-6",
+  // Sonnet 5: near-Opus agentic quality at sonnet-4-6's sticker price
+  // ($2/$10 intro through 2026-08-31). callAnthropic pins thinking off for it.
+  anthropic: "claude-sonnet-5",
+  // INTERIM: gpt-5.6-terra (gpt-5.5-class at this exact price) is GA but still
+  // rolling out org-by-org — 404s as model_not_found until provisioned. Flip to
+  // "gpt-5.6-terra" once it appears in /v1/models. The codex backend already
+  // serves it, so the openai-codex entry stays on 5.6.
   openai: "gpt-5.4",
+  //openai: "gpt-5.6-terra",
   gemini: "gemini-3.5-flash",
   mistral: "mistral-medium-latest",
   groq: "llama-3.3-70b-versatile",
-  "openai-codex": "gpt-5.4"
+  "openai-codex": "gpt-5.6-terra"
 };
 
 export const LUDICROUS_LLM_MODELS = {
   anthropic: "claude-opus-4-8",
+  // INTERIM: gpt-5.6-sol (beats gpt-5.5 at the same price) — same rollout
+  // gate as terra above. Flip once it appears in /v1/models.
   openai: "gpt-5.5",
+  //openai: "gpt-5.6-sol",
   gemini: "gemini-3.1-pro-preview-customtools",
   mistral: "mistral-medium-latest",
   groq: "llama-3.3-70b-versatile",
-  "openai-codex": "gpt-5.5"
+  "openai-codex": "gpt-5.6-sol"
 };
