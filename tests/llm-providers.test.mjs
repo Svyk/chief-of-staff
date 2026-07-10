@@ -27,6 +27,7 @@ import {
   CODEX_PROVIDER_ID,
   isCodexProvider,
   callCodexResponsesStreaming,
+  callAnthropic,
 } from "../src/llm-providers.js";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -611,8 +612,8 @@ test("codex is zero-cost and OpenAI-compatible; tiers mirror the openai API line
   assert.deepEqual(getModelCostRates("gpt-5.5", CODEX_PROVIDER_ID), { inputPerM: 0, outputPerM: 0 });
   assert.equal(isOpenAICompatible(CODEX_PROVIDER_ID), true);
   assert.equal(getLlmModel(ext, CODEX_PROVIDER_ID), "gpt-5.4-mini");
-  assert.equal(getPowerModel(ext, CODEX_PROVIDER_ID), "gpt-5.4");
-  assert.equal(getLudicrousModel(ext, CODEX_PROVIDER_ID), "gpt-5.5");
+  assert.equal(getPowerModel(ext, CODEX_PROVIDER_ID), "gpt-5.6-terra");
+  assert.equal(getLudicrousModel(ext, CODEX_PROVIDER_ID), "gpt-5.6-sol");
 });
 
 test("failover works FROM codex to keyed providers; codex is never a failover TARGET", () => {
@@ -725,4 +726,28 @@ test("callLlm wraps codex streaming into chat-completions response shape", async
   assert.equal(res.choices[0].message.content, "answer");
   assert.equal(res.choices[0].message.tool_calls[0].function.name, "t");
   assert.equal(res.usage.prompt_tokens, 1);
+});
+
+// ── callAnthropic: Sonnet 5 thinking gate ────────────────────────────────────
+
+test("callAnthropic pins thinking off on Sonnet 5, leaves other models untouched", async (t) => {
+  initWithExt(makeExtensionAPI());
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, opts) => {
+    captured = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ content: [] }) };
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  // Sonnet 5 defaults to adaptive thinking when the field is omitted — billed,
+  // and counted against max_tokens — so the request must pin it off.
+  await callAnthropic("sk-x", "claude-sonnet-5", "sys", [], []);
+  assert.deepEqual(captured.thinking, { type: "disabled" });
+
+  // Other models keep today's shape (no thinking field at all).
+  await callAnthropic("sk-x", "claude-opus-4-8", "sys", [], []);
+  assert.equal(captured.thinking, undefined);
+  await callAnthropic("sk-x", "claude-haiku-4-5", "sys", [], []);
+  assert.equal(captured.thinking, undefined);
 });

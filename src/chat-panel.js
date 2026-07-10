@@ -619,7 +619,10 @@ function shortModelLabel(modelId) {
   // Gemini — check flash-lite before flash
   if (id.includes("flash-lite")) return "flash-lite";
   if (id.includes("flash"))      return "flash";
-  // OpenAI
+  // OpenAI — check 5.6 variants before the generic families
+  if (id.includes("gpt-5.6-sol"))   return "gpt-5.6-sol";
+  if (id.includes("gpt-5.6-terra")) return "gpt-5.6-terra";
+  if (id.includes("gpt-5.6-luna"))  return "gpt-5.6-luna";
   if (id.includes("gpt-5-mini")) return "gpt-5-mini";
   if (id.includes("gpt-5.5"))    return "gpt-5.5";
   if (id.includes("gpt-5.4"))    return "gpt-5.4";
