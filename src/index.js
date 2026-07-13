@@ -12,6 +12,7 @@ import {
   setLastAskMeta, getLastAskMeta, clearLastAskMeta,
   buildWhyReport, buildStatusReport, buildVerifyReport,
 } from "./transparency.js";
+import { describeCodexTimeoutFailure, describeWebFetchProxyFailure } from "./cors-proxy.js";
 import {
   initIntentClassifier, classifyIntent, evaluateConfidence,
   clearIntentCache, getCachedClassification
@@ -329,6 +330,9 @@ const DEFAULT_COMPOSIO_MCP_URL = "enter your composio mcp url here";
 const DEFAULT_COMPOSIO_API_KEY = "enter your composio api key here";
 const DEFAULT_ASSISTANT_NAME = "Chief of Staff";
 const SETTINGS_KEYS = {
+  // Historically the Composio proxy URL; the same roam-mcp-proxy Worker also
+  // fronts roam_web_fetch (Cloudflare Browser Rendering). Key name kept for
+  // back-compat; the settings label calls it the CORS Proxy URL.
   composioMcpUrl: "composio-mcp-url",
   composioApiKey: "composio-api-key",
   assistantName: "assistant-name",
@@ -544,6 +548,11 @@ const WRITE_TOOL_NAMES = new Set([
  * Uses Roam's built-in CORS proxy if available, otherwise returns the direct URL.
  * The Roam proxy (Google Cloud Functions) is faster than routing through a personal
  * Cloudflare worker and avoids overloading it with LLM traffic.
+ *
+ * NOTE (#137): openai-codex is stuck with this proxy and therefore with its ~60s
+ * timeout. Routing Codex through the user's own Cloudflare Worker was tried and
+ * cannot work — OpenAI's WAF blocks the `Cf-Worker` header the Cloudflare runtime
+ * adds to every Worker subrequest, and user code cannot strip it. See src/cors-proxy.js.
  */
 function getProxiedLlmUrl(directUrl) {
   const proxy = window.roamAlphaAPI?.constants?.corsAnywhereProxyUrl;
@@ -5330,6 +5339,14 @@ async function startCodexConnectFlow(extensionAPI) {
       // Remount (not just rebuild): re-rendered select widgets ignore the
       // `value` prop, so the provider dropdown only updates on a fresh mount.
       try { remountSettingsPanel(extensionAPI); } catch { /* settings panel may not be open */ }
+      // Long generations (~60s+) can't complete on this path — Roam's shared
+      // CORS proxy times out and no proxy of ours can replace it (#137). Better
+      // to say so now than to have it surface as a mystery 502 mid-skill-run.
+      showInfoToast(
+        "Heads-up: long runs are capped",
+        "ChatGPT-subscription calls route through Roam's shared CORS proxy, which times out at ~60s. "
+        + "Everyday queries are fine; heavy skill runs will fail. Switch to an API-key provider (e.g. Anthropic) for those."
+      );
     },
     onError: (error) => {
       hideCodexCodeToast();
@@ -6621,6 +6638,7 @@ function onload({ extensionAPI }) {
     getSettingString,
     getSettingBool,
     getProxiedLlmUrl,
+    describeCodexTimeoutFailure,
     getValidCodexToken,
     getCodexInstructions,
     isCodexConnected,
@@ -6749,6 +6767,7 @@ function onload({ extensionAPI }) {
     getCloudflareApiToken: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.cloudflareApiToken, ""),
     getCloudflareAccountId: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.cloudflareAccountId, ""),
     getCorsProxyUrl: () => getSettingString(extensionAPIRef, SETTINGS_KEYS.composioMcpUrl, ""),
+    describeWebFetchProxyFailure,
     // Undo ledger (#131) — roam_undo reverses the last COS mutation batch
     getUndoableBatch,
     executeLedgerUndo,
