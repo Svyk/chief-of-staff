@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:54ac54e6-07c4-4937-a4a0-ed337a710936",
+  "serialNumber": "urn:uuid:7dd8a478-7f19-4bc6-8487-edb50b9064b7",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-04-15T15:16:13.994Z",
+    "timestamp": "2026-07-13T06:27:07.911Z",
     "tools": [
       {
         "vendor": "chief-of-staff",
@@ -24,11 +24,11 @@
       },
       {
         "name": "chief:aibom:npm-component-count",
-        "value": "220"
+        "value": "210"
       },
       {
         "name": "chief:aibom:ai-component-count",
-        "value": "20"
+        "value": "24"
       }
     ]
   },
@@ -52,8 +52,8 @@
     {
       "type": "library",
       "name": "@hono/node-server",
-      "version": "1.19.9",
-      "purl": "pkg:npm/hono/node-server@1.19.9",
+      "version": "1.19.14",
+      "purl": "pkg:npm/hono/node-server@1.19.14",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -148,8 +148,8 @@
     {
       "type": "library",
       "name": "@modelcontextprotocol/sdk",
-      "version": "1.26.0",
-      "purl": "pkg:npm/modelcontextprotocol/sdk@1.26.0",
+      "version": "1.29.0",
+      "purl": "pkg:npm/modelcontextprotocol/sdk@1.29.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -179,41 +179,9 @@
     },
     {
       "type": "library",
-      "name": "@types/eslint-scope",
-      "version": "3.7.7",
-      "purl": "pkg:npm/types/eslint-scope@3.7.7",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@types/eslint",
-      "version": "9.6.1",
-      "purl": "pkg:npm/types/eslint@9.6.1",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@types/estree",
-      "version": "1.0.8",
-      "purl": "pkg:npm/types/estree@1.0.8",
+      "version": "1.0.9",
+      "purl": "pkg:npm/types/estree@1.0.9",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -244,8 +212,8 @@
     {
       "type": "library",
       "name": "@types/node",
-      "version": "25.2.3",
-      "purl": "pkg:npm/types/node@25.2.3",
+      "version": "25.9.3",
+      "purl": "pkg:npm/types/node@25.9.3",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -580,22 +548,6 @@
     {
       "type": "library",
       "name": "accepts",
-      "version": "1.54.0",
-      "purl": "pkg:npm/accepts@1.54.0",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "accepts",
       "version": "2.0.0",
       "purl": "pkg:npm/accepts@2.0.0",
       "properties": [
@@ -644,8 +596,8 @@
     {
       "type": "library",
       "name": "acorn",
-      "version": "8.15.0",
-      "purl": "pkg:npm/acorn@8.15.0",
+      "version": "8.17.0",
+      "purl": "pkg:npm/acorn@8.17.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -692,8 +644,8 @@
     {
       "type": "library",
       "name": "ajv",
-      "version": "8.17.1",
-      "purl": "pkg:npm/ajv@8.17.1",
+      "version": "8.20.0",
+      "purl": "pkg:npm/ajv@8.20.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -1172,8 +1124,8 @@
     {
       "type": "library",
       "name": "enhanced-resolve",
-      "version": "5.19.0",
-      "purl": "pkg:npm/enhanced-resolve@5.19.0",
+      "version": "5.24.0",
+      "purl": "pkg:npm/enhanced-resolve@5.24.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -1236,8 +1188,8 @@
     {
       "type": "library",
       "name": "es-module-lexer",
-      "version": "2.0.0",
-      "purl": "pkg:npm/es-module-lexer@2.0.0",
+      "version": "2.1.0",
+      "purl": "pkg:npm/es-module-lexer@2.1.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -1428,24 +1380,8 @@
     {
       "type": "library",
       "name": "express-rate-limit",
-      "version": "8.2.1",
-      "purl": "pkg:npm/express-rate-limit@8.2.1",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "express",
-      "version": "1.54.0",
-      "purl": "pkg:npm/express@1.54.0",
+      "version": "8.5.2",
+      "purl": "pkg:npm/express-rate-limit@8.5.2",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -1508,8 +1444,8 @@
     {
       "type": "library",
       "name": "fast-uri",
-      "version": "3.1.0",
-      "purl": "pkg:npm/fast-uri@3.1.0",
+      "version": "3.1.2",
+      "purl": "pkg:npm/fast-uri@3.1.2",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -1764,8 +1700,8 @@
     {
       "type": "library",
       "name": "hono",
-      "version": "4.11.9",
-      "purl": "pkg:npm/hono@4.11.9",
+      "version": "4.12.25",
+      "purl": "pkg:npm/hono@4.12.25",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -1892,8 +1828,8 @@
     {
       "type": "library",
       "name": "ip-address",
-      "version": "10.0.1",
-      "purl": "pkg:npm/ip-address@10.0.1",
+      "version": "10.2.0",
+      "purl": "pkg:npm/ip-address@10.2.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -2051,22 +1987,6 @@
     },
     {
       "type": "library",
-      "name": "json-parse-even-better-errors",
-      "version": "2.3.1",
-      "purl": "pkg:npm/json-parse-even-better-errors@2.3.1",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "json-schema-traverse",
       "version": "1.0.0",
       "purl": "pkg:npm/json-schema-traverse@1.0.0",
@@ -2116,8 +2036,8 @@
     {
       "type": "library",
       "name": "loader-runner",
-      "version": "4.3.1",
-      "purl": "pkg:npm/loader-runner@4.3.1",
+      "version": "4.3.2",
+      "purl": "pkg:npm/loader-runner@4.3.2",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -2212,8 +2132,8 @@
     {
       "type": "library",
       "name": "mime-db",
-      "version": "1.52.0",
-      "purl": "pkg:npm/mime-db@1.52.0",
+      "version": "1.54.0",
+      "purl": "pkg:npm/mime-db@1.54.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -2221,23 +2141,7 @@
         },
         {
           "name": "chief:aibom:dev",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "mime-types",
-      "version": "2.1.35",
-      "purl": "pkg:npm/mime-types@2.1.35",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "true"
+          "value": "false"
         }
       ]
     },
@@ -2500,8 +2404,8 @@
     {
       "type": "library",
       "name": "path-to-regexp",
-      "version": "8.3.0",
-      "purl": "pkg:npm/path-to-regexp@8.3.0",
+      "version": "8.4.2",
+      "purl": "pkg:npm/path-to-regexp@8.4.2",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -2596,8 +2500,8 @@
     {
       "type": "library",
       "name": "qs",
-      "version": "6.14.1",
-      "purl": "pkg:npm/qs@6.14.1",
+      "version": "6.15.2",
+      "purl": "pkg:npm/qs@6.15.2",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -2606,22 +2510,6 @@
         {
           "name": "chief:aibom:dev",
           "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "randombytes",
-      "version": "2.1.0",
-      "purl": "pkg:npm/randombytes@2.1.0",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "true"
         }
       ]
     },
@@ -2836,22 +2724,6 @@
     {
       "type": "library",
       "name": "send",
-      "version": "1.54.0",
-      "purl": "pkg:npm/send@1.54.0",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "send",
       "version": "3.0.2",
       "purl": "pkg:npm/send@3.0.2",
       "properties": [
@@ -2862,22 +2734,6 @@
         {
           "name": "chief:aibom:dev",
           "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "serialize-javascript",
-      "version": "6.0.2",
-      "purl": "pkg:npm/serialize-javascript@6.0.2",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "true"
         }
       ]
     },
@@ -3156,8 +3012,8 @@
     {
       "type": "library",
       "name": "tapable",
-      "version": "2.3.0",
-      "purl": "pkg:npm/tapable@2.3.0",
+      "version": "2.3.3",
+      "purl": "pkg:npm/tapable@2.3.3",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3172,8 +3028,8 @@
     {
       "type": "library",
       "name": "terser-webpack-plugin",
-      "version": "5.3.16",
-      "purl": "pkg:npm/terser-webpack-plugin@5.3.16",
+      "version": "5.6.1",
+      "purl": "pkg:npm/terser-webpack-plugin@5.6.1",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3188,8 +3044,8 @@
     {
       "type": "library",
       "name": "terser",
-      "version": "5.46.0",
-      "purl": "pkg:npm/terser@5.46.0",
+      "version": "5.48.0",
+      "purl": "pkg:npm/terser@5.48.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3206,22 +3062,6 @@
       "name": "toidentifier",
       "version": "1.0.1",
       "purl": "pkg:npm/toidentifier@1.0.1",
-      "properties": [
-        {
-          "name": "chief:aibom:component-class",
-          "value": "npm-dependency"
-        },
-        {
-          "name": "chief:aibom:dev",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "type-is",
-      "version": "1.54.0",
-      "purl": "pkg:npm/type-is@1.54.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3268,8 +3108,8 @@
     {
       "type": "library",
       "name": "undici-types",
-      "version": "7.16.0",
-      "purl": "pkg:npm/undici-types@7.16.0",
+      "version": "7.24.6",
+      "purl": "pkg:npm/undici-types@7.24.6",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3428,8 +3268,8 @@
     {
       "type": "library",
       "name": "webpack-sources",
-      "version": "3.3.3",
-      "purl": "pkg:npm/webpack-sources@3.3.3",
+      "version": "3.5.0",
+      "purl": "pkg:npm/webpack-sources@3.5.0",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3444,8 +3284,8 @@
     {
       "type": "library",
       "name": "webpack",
-      "version": "5.105.1",
-      "purl": "pkg:npm/webpack@5.105.1",
+      "version": "5.107.2",
+      "purl": "pkg:npm/webpack@5.107.2",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3649,9 +3489,28 @@
       ]
     },
     {
+      "type": "service",
+      "name": "llm-endpoint/openai-codex",
+      "version": "runtime-config",
+      "description": "https://chatgpt.com/backend-api/codex/responses",
+      "endpoints": [
+        "https://chatgpt.com/backend-api/codex/responses"
+      ],
+      "properties": [
+        {
+          "name": "chief:aibom:component-class",
+          "value": "llm-endpoint"
+        },
+        {
+          "name": "chief:aibom:provider",
+          "value": "openai-codex"
+        }
+      ]
+    },
+    {
       "type": "machine-learning-model",
       "name": "llm-model/anthropic/mini",
-      "version": "claude-haiku-4-5-20251001",
+      "version": "claude-haiku-4-5",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3689,7 +3548,7 @@
     {
       "type": "machine-learning-model",
       "name": "llm-model/gemini/mini",
-      "version": "gemini-3.1-flash-lite-preview",
+      "version": "gemini-3.1-flash-lite",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3745,8 +3604,27 @@
     },
     {
       "type": "machine-learning-model",
+      "name": "llm-model/openai-codex/mini",
+      "version": "gpt-5.4-mini",
+      "properties": [
+        {
+          "name": "chief:aibom:component-class",
+          "value": "llm-model"
+        },
+        {
+          "name": "chief:aibom:provider",
+          "value": "openai-codex"
+        },
+        {
+          "name": "chief:aibom:tier",
+          "value": "mini"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
       "name": "llm-model/anthropic/power",
-      "version": "claude-sonnet-4-6",
+      "version": "claude-sonnet-5",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3765,7 +3643,7 @@
     {
       "type": "machine-learning-model",
       "name": "llm-model/openai/power",
-      "version": "gpt-4.1",
+      "version": "gpt-5.6-terra",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3784,7 +3662,7 @@
     {
       "type": "machine-learning-model",
       "name": "llm-model/gemini/power",
-      "version": "gemini-3-flash-preview",
+      "version": "gemini-3.5-flash",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3840,8 +3718,8 @@
     },
     {
       "type": "machine-learning-model",
-      "name": "llm-model/mistral/ludicrous",
-      "version": "mistral-large-2512",
+      "name": "llm-model/openai-codex/power",
+      "version": "gpt-5.6-terra",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3849,7 +3727,26 @@
         },
         {
           "name": "chief:aibom:provider",
-          "value": "mistral"
+          "value": "openai-codex"
+        },
+        {
+          "name": "chief:aibom:tier",
+          "value": "power"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "name": "llm-model/anthropic/ludicrous",
+      "version": "claude-opus-4-8",
+      "properties": [
+        {
+          "name": "chief:aibom:component-class",
+          "value": "llm-model"
+        },
+        {
+          "name": "chief:aibom:provider",
+          "value": "anthropic"
         },
         {
           "name": "chief:aibom:tier",
@@ -3860,7 +3757,7 @@
     {
       "type": "machine-learning-model",
       "name": "llm-model/openai/ludicrous",
-      "version": "gpt-5.4",
+      "version": "gpt-5.6-sol",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3897,8 +3794,8 @@
     },
     {
       "type": "machine-learning-model",
-      "name": "llm-model/anthropic/ludicrous",
-      "version": "claude-opus-4-6",
+      "name": "llm-model/mistral/ludicrous",
+      "version": "mistral-medium-latest",
       "properties": [
         {
           "name": "chief:aibom:component-class",
@@ -3906,7 +3803,7 @@
         },
         {
           "name": "chief:aibom:provider",
-          "value": "anthropic"
+          "value": "mistral"
         },
         {
           "name": "chief:aibom:tier",
@@ -3926,6 +3823,25 @@
         {
           "name": "chief:aibom:provider",
           "value": "groq"
+        },
+        {
+          "name": "chief:aibom:tier",
+          "value": "ludicrous"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "name": "llm-model/openai-codex/ludicrous",
+      "version": "gpt-5.6-sol",
+      "properties": [
+        {
+          "name": "chief:aibom:component-class",
+          "value": "llm-model"
+        },
+        {
+          "name": "chief:aibom:provider",
+          "value": "openai-codex"
         },
         {
           "name": "chief:aibom:tier",

@@ -142,7 +142,7 @@ In addition to the five built-in providers above, you can configure up to three 
 
 Instead of an OpenAI API key, you can authenticate with your **ChatGPT Plus or Pro subscription** — GPT calls then draw on the subscription's included weekly quota rather than per-token API billing. For heavy `/ludicrous` use this can turn hundreds of dollars of monthly API spend into the flat $20/month you may already pay.
 
-**How it works.** Chief of Staff uses OpenAI's Codex device sign-in (the same flow as `codex login --device-auth` and Hermes Agent): run **command palette → Chief of Staff: Connect ChatGPT Subscription (Codex)**, a dialog shows a one-time code, open the sign-in page ([auth.openai.com/codex/device](https://auth.openai.com/codex/device)) from any device, enter the code, and approve. On success, `openai-codex` becomes your primary LLM provider automatically (change it back anytime in settings — it also stays available in the dropdown). Disconnecting restores a working provider (your first configured API key, or a custom slot). Tiers: mini → **gpt-5.4-mini**, power → **gpt-5.6-terra**, ludicrous → **gpt-5.6-sol** — everyday queries preserve your weekly quota and only escalated requests draw on the top model. Requests stream through Roam's CORS proxy to OpenAI's Codex backend; tokens are stored in Roam Depot settings and refreshed automatically.
+**How it works.** Chief of Staff uses OpenAI's Codex device sign-in (the same flow as `codex login --device-auth` and Hermes Agent): run **command palette → Chief of Staff: Connect ChatGPT Subscription (Codex)**, a dialog shows a one-time code, open the sign-in page ([auth.openai.com/codex/device](https://auth.openai.com/codex/device)) from any device, enter the code, and approve. On success, `openai-codex` becomes your primary LLM provider automatically (change it back anytime in settings — it also stays available in the dropdown). Disconnecting restores a working provider (your first configured API key, or a custom slot). Tiers: mini → **gpt-5.4-mini**, power → **gpt-5.6-terra**, ludicrous → **gpt-5.6-sol** — everyday queries preserve your weekly quota and only escalated requests draw on the top model. Requests stream to OpenAI's Codex backend through Roam's shared CORS proxy; tokens are stored in Roam Depot settings and refreshed automatically. Note the ~60s ceiling that proxy imposes — see the last bullet below.
 
 **Read this before enabling:**
 
@@ -151,6 +151,7 @@ Instead of an OpenAI API key, you can authenticate with your **ChatGPT Plus or P
 - **Keep an API key configured.** `openai-codex` is never a failover *target* — but when it fails (quota, expired auth), Chief of Staff automatically falls over TO your API-key providers, so responses keep flowing.
 - **One graph session at a time.** Refresh tokens rotate on every renewal; two Roam sessions refreshing the same credential can invalidate each other. If auth dies, run **Reconnect ChatGPT Subscription** from the command palette.
 - **Zero-cost in usage tracking.** Like custom providers, subscription calls don't count against the daily spending cap (there's no per-token price to meter).
+- **Long runs are capped at ~60s — this is a hard limit, not a setting.** Subscription requests must route through Roam's shared CORS proxy (`chatgpt.com` blocks cross-origin browser calls), and that proxy is a cloud function which times out at ~60s. Generations longer than that die with a gateway error at around 63 seconds; heavy skill runs hit this reliably, everyday queries do not. **You cannot fix this with your own Cloudflare Worker** — it was tried: Cloudflare's runtime stamps a `Cf-Worker` header on every Worker subrequest (it is added after user code, so it cannot be stripped) and OpenAI's WAF rejects any request carrying it with a 403. Escaping the ceiling would need a proxy on a non-Cloudflare platform. For now, **use an API-key provider (e.g. Anthropic) for long runs** — those are called directly from the browser with no proxy and no time limit.
 
 Command palette entries: **Connect ChatGPT Subscription (Codex)**, **Disconnect ChatGPT Subscription**, **Reconnect ChatGPT Subscription**. Connection status shows in settings under **ChatGPT Subscription (EXPERIMENTAL)**.
 
@@ -207,6 +208,8 @@ This helpful video overview was created by Maya at Roam Research for publication
 
 Roam runs in the browser, so cross-origin requests to Composio's MCP endpoint are blocked by default. You need a small Cloudflare Worker that adds CORS headers. A ready-to-deploy worker lives in a separate repo: [`roam-mcp-proxy`](https://github.com/mlava/roam-mcp-proxy). It only accepts requests originating from `roamresearch.com` by default.
 
+**Deploy it once and it covers both Composio and [web page fetching](#5-web-page-fetching-optional)** — there is no second proxy to install. If you deployed this worker before **v2**, redeploy to pick up web fetching; your worker URL doesn't change and no settings need updating.
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mlava/roam-mcp-proxy)
 
 Or deploy manually:
@@ -224,7 +227,7 @@ Wrangler will print your worker URL (e.g. `https://roam-mcp-proxy.<you>.workers.
 #### 2b. Configure the extension
 
 1. Create a [Composio](https://composio.dev) account and copy your **API key** from the Composio dashboard (Settings → API Keys — starts with `ak_`).
-2. In **Settings > Chief of Staff**, set **Composio Proxy URL** to just your proxy worker's base URL — no path required:
+2. In **Settings > Chief of Staff**, set **CORS Proxy URL** to just your proxy worker's base URL — no path required:
    ```
    https://roam-mcp-proxy.<you>.workers.dev
    ```
@@ -335,7 +338,7 @@ The `roam_web_fetch` tool lets the assistant fetch any public web page and retur
 
 - A Cloudflare account (free tier includes Browser Rendering)
 - A Cloudflare API token with **Browser Rendering Edit** permission
-- Your CORS proxy (roam-mcp-proxy) must allow `api.cloudflare.com`
+- Your CORS proxy ([roam-mcp-proxy](https://github.com/mlava/roam-mcp-proxy)) must allow `api.cloudflare.com`. **v2 and later allow it out of the box** — if you deployed the worker earlier, redeploy it (`git pull && npx wrangler deploy`); your proxy URL doesn't change and no settings need updating. (If you previously hand-added `api.cloudflare.com` to an older worker's allowlist, that still works — but redeploying replaces the manual edit and gets you the path-locking, which restricts the proxy to Cloudflare's Browser Rendering API rather than your whole Cloudflare account.)
 
 **Setup:**
 

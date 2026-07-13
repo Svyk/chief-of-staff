@@ -265,12 +265,12 @@ export function buildSettingsConfig(extensionAPI) {
     settings.push(
       {
         id: deps.SETTINGS_KEYS.composioMcpUrl,
-        name: "Composio Proxy URL",
-        description: "Base URL of your roam-mcp-proxy Cloudflare Worker. Format: https://your-proxy.workers.dev — the Composio session endpoint is constructed automatically. Leave blank if not using Composio.",
+        name: "CORS Proxy URL",
+        description: "Base URL of your roam-mcp-proxy Cloudflare Worker. Format: https://your-proxy.workers.dev — one deployment serves both Composio and web page fetching. Redeploy the worker if you set it up before v2 (v2 allows Cloudflare Browser Rendering out of the box). Leave blank if you use neither.",
         action: {
           type: "input",
           value: getComposioSettingOrBlank(extensionAPI, deps.SETTINGS_KEYS.composioMcpUrl),
-          placeholder: "https://your-proxy.workers.dev"
+          placeholder: "https://your-proxy.workers.dev",
         }
       },
       {

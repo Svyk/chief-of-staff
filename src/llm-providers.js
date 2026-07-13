@@ -993,6 +993,12 @@ export async function callCodexResponsesStreaming(model, system, messages, tools
     ? AbortSignal.any([options.signal, connectAbort.signal])
     : connectAbort.signal;
 
+  // Codex has to go through Roam's CORS proxy, which times out at ~60s (#137).
+  // Routing it through the user's own Cloudflare Worker was tried and cannot
+  // work: OpenAI's WAF blocks the Cf-Worker header the runtime adds to every
+  // Worker subrequest. Track elapsed time so a timeout can be named as such.
+  const requestStartedAt = Date.now();
+
   let response;
   try {
     response = await fetch(deps.getProxiedLlmUrl(LLM_API_ENDPOINTS[CODEX_PROVIDER_ID]), {
@@ -1015,6 +1021,15 @@ export async function callCodexResponsesStreaming(model, system, messages, tools
   if (!response.ok) {
     const errorText = (await response.text()).slice(0, 800);
     deps.debugLog("[Chief flow] openai-codex error", response.status, "body:", errorText);
+
+    // A gateway error after a long run is the proxy's ~60s timeout, not a fault
+    // in the request — name it before falling through to the generic branches.
+    const timeoutProblem = deps.describeCodexTimeoutFailure?.({
+      status: response.status,
+      elapsedMs: Date.now() - requestStartedAt,
+    });
+    if (timeoutProblem) throw new Error(timeoutProblem);
+
     if (response.status === 401 || response.status === 403) {
       throw new Error(
         `openai-codex auth error ${response.status}: ChatGPT subscription token was rejected. `

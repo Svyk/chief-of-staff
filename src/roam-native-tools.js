@@ -2498,6 +2498,12 @@ export function getRoamNativeTools() {
           }
           if (!resp.ok) {
             const errBody = await resp.text().catch(() => "");
+            // A 403 can come from the proxy refusing the host OR from Cloudflare
+            // refusing the token. Check the proxy case first — otherwise the user
+            // is told the Cloudflare API rejected them and goes hunting for a
+            // token problem that doesn't exist.
+            const proxyProblem = deps.describeWebFetchProxyFailure?.({ status: resp.status, bodyText: errBody });
+            if (proxyProblem) throw new Error(proxyProblem);
             throw new Error(`Cloudflare API returned HTTP ${resp.status}: ${errBody.slice(0, 200)}`);
           }
 
