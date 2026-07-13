@@ -342,12 +342,13 @@ The `roam_web_fetch` tool lets the assistant fetch any public web page and retur
 
 **Setup:**
 
-1. Go to [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) and create a custom token with **Account > Browser Rendering > Edit** permission.
-2. Copy your **Account ID** from your Cloudflare dashboard overview page.
+1. Go to [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → **Create Custom Token**. Under Permissions choose **Account** · **Browser Rendering** · **Edit**, scope it to your account, then Continue and Create. Copy the token immediately — Cloudflare displays it once.
+2. Copy your **Account ID** from the right-hand sidebar of your Cloudflare dashboard overview page (it's also the hex string in the dashboard URL: `dash.cloudflare.com/<account-id>/…`).
 3. In **Settings > Chief of Staff**, enable **Show Integration Settings** and fill in:
    - **Cloudflare API Token** — the token you just created
    - **Cloudflare Account ID** — your account ID
-4. Ensure your roam-mcp-proxy Cloudflare Worker allows requests to `api.cloudflare.com` (add it to the upstream allowlist if not already present).
+   - **CORS Proxy URL** — your roam-mcp-proxy worker URL, if not already set
+4. Nothing to do on the worker: **v2 allows `api.cloudflare.com` out of the box** (path-locked to Browser Rendering, so the token can't be aimed at the rest of your Cloudflare account). If you're on a pre-v2 worker, redeploy — see Requirements above.
 
 The tool is now available to the assistant. Ask it to "fetch https://example.com as markdown" or "summarise this article: https://...".
 
