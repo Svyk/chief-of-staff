@@ -108,7 +108,7 @@ Default models by tier:
 | Tier | Anthropic | OpenAI | Gemini | Mistral | Groq | OpenAI-Codex (subscription) |
 |---|---|---|---|---|---|---|
 | Mini (default) | claude-haiku-4-5 | gpt-5.4-mini | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile | gpt-5.4-mini |
-| Power (`/power`) | claude-sonnet-5 | gpt-5.6-terra | gemini-3.5-flash | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-terra |
+| Power (`/power`) | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-terra |
 | Ludicrous (`/ludicrous`) | claude-opus-4-8 | gpt-5.6-sol | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-sol |
 
 #### Custom OpenAI-compatible providers (LM Studio, Ollama, OpenRouter, vLLM, …)

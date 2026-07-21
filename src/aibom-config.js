@@ -26,7 +26,8 @@ export const POWER_LLM_MODELS = {
   // ($2/$10 intro through 2026-08-31). callAnthropic pins thinking off for it.
   anthropic: "claude-sonnet-5",
   openai: "gpt-5.6-terra",
-  gemini: "gemini-3.5-flash",
+  // 3.6-flash: newer stable, same input as 3.5-flash, 17% cheaper output ($7.50 vs $9.00)
+  gemini: "gemini-3.6-flash",
   mistral: "mistral-medium-latest",
   groq: "llama-3.3-70b-versatile",
   "openai-codex": "gpt-5.6-terra"
