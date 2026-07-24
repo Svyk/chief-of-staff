@@ -34,7 +34,9 @@ export const POWER_LLM_MODELS = {
 };
 
 export const LUDICROUS_LLM_MODELS = {
-  anthropic: "claude-opus-4-8",
+  // Opus 5: strict upgrade over Opus 4.8 at identical $5/$25. Thinking is pinned
+  // off in callAnthropic so the 8,192-token budget stays available for output.
+  anthropic: "claude-opus-5",
   openai: "gpt-5.6-sol",
   gemini: "gemini-3.1-pro-preview-customtools",
   mistral: "mistral-medium-latest",

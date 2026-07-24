@@ -436,6 +436,7 @@ const LLM_MODEL_COSTS = {
   "claude-opus-4-6": [5.00, 25.00],
   "claude-opus-4-7": [5.00, 25.00],
   "claude-opus-4-8": [5.00, 25.00],
+  "claude-opus-5": [5.00, 25.00],
   "gpt-5-mini": [0.25, 2.00],
   "gpt-5.4-mini": [0.75, 4.50],
   "gpt-4.1": [2.00, 8.00],
@@ -457,7 +458,7 @@ const LLM_MODEL_COSTS = {
 };
 // Anthropic advisor tool (beta) — model invoked when the executor consults the advisor.
 // Pinned to Opus to maximise the quality delta over the executor (Haiku/Sonnet).
-const ANTHROPIC_ADVISOR_MODEL = "claude-opus-4-8";
+const ANTHROPIC_ADVISOR_MODEL = "claude-opus-5";
 const ANTHROPIC_ADVISOR_BETA_HEADER = "advisor-tool-2026-03-01";
 const ANTHROPIC_ADVISOR_TOOL_TYPE = "advisor_20260301";
 // Map skill shorthand source names → actual LLM tool names

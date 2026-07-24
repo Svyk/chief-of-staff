@@ -605,10 +605,11 @@ export async function callAnthropic(apiKey, model, system, messages, tools, opti
       body: JSON.stringify({
         model,
         max_tokens: effectiveMaxTokens,
-        // Sonnet 5 runs adaptive thinking when the field is omitted (4.6 ran
-        // thinking-off). Thinking is billed and counts against max_tokens, so
-        // pin the pre-Sonnet-5 behaviour; "disabled" is accepted on Sonnet 5.
-        ...(model.includes("sonnet-5") ? { thinking: { type: "disabled" } } : {}),
+        // Sonnet 5 and Opus 5 run adaptive thinking when the field is omitted
+        // (4.6/4.8 ran thinking-off). Thinking is billed and counts against
+        // max_tokens, so pin the pre-5 behaviour. "disabled" is accepted at the
+        // default "high" effort on both (only xhigh/max reject it on Opus 5).
+        ...(model.includes("sonnet-5") || model.includes("opus-5") ? { thinking: { type: "disabled" } } : {}),
         system: [
           { type: "text", text: safeSystem, cache_control: { type: "ephemeral" } }
         ],
