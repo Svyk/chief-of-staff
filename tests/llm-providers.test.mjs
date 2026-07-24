@@ -728,9 +728,9 @@ test("callLlm wraps codex streaming into chat-completions response shape", async
   assert.equal(res.usage.prompt_tokens, 1);
 });
 
-// ── callAnthropic: Sonnet 5 thinking gate ────────────────────────────────────
+// ── callAnthropic: Sonnet 5 / Opus 5 thinking gate ───────────────────────────
 
-test("callAnthropic pins thinking off on Sonnet 5, leaves other models untouched", async (t) => {
+test("callAnthropic pins thinking off on Sonnet 5 and Opus 5, leaves other models untouched", async (t) => {
   initWithExt(makeExtensionAPI());
   const originalFetch = globalThis.fetch;
   let captured;
@@ -740,12 +740,14 @@ test("callAnthropic pins thinking off on Sonnet 5, leaves other models untouched
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
-  // Sonnet 5 defaults to adaptive thinking when the field is omitted — billed,
-  // and counted against max_tokens — so the request must pin it off.
+  // Sonnet 5 and Opus 5 default to adaptive thinking when the field is omitted —
+  // billed, and counted against max_tokens — so the request must pin it off.
   await callAnthropic("sk-x", "claude-sonnet-5", "sys", [], []);
   assert.deepEqual(captured.thinking, { type: "disabled" });
+  await callAnthropic("sk-x", "claude-opus-5", "sys", [], []);
+  assert.deepEqual(captured.thinking, { type: "disabled" });
 
-  // Other models keep today's shape (no thinking field at all).
+  // Pre-5 models keep today's shape (no thinking field at all).
   await callAnthropic("sk-x", "claude-opus-4-8", "sys", [], []);
   assert.equal(captured.thinking, undefined);
   await callAnthropic("sk-x", "claude-haiku-4-5", "sys", [], []);
