@@ -443,8 +443,9 @@ const LLM_MODEL_COSTS = {
   "gpt-5.4": [2.50, 15.00],
   "gpt-5.5": [5.00, 30.00],
   "gpt-5.6-sol": [5.00, 30.00],
-  "gpt-5.6-terra": [2.50, 15.00],
-  "gpt-5.6-luna": [1.00, 6.00],
+  // Repriced 2026-07-31 (developers.openai.com/api/docs/pricing): terra $2.50/$15 → $2/$12, luna $1/$6 → $0.20/$1.20
+  "gpt-5.6-terra": [2.00, 12.00],
+  "gpt-5.6-luna": [0.20, 1.20],
   "gemini-3.1-flash-lite-preview": [0.25, 1.50],
   "gemini-3.1-flash-lite": [0.25, 1.50],
   "gemini-3-flash-preview": [0.50, 3.00],

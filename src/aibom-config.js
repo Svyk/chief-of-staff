@@ -11,14 +11,17 @@ export const LLM_API_ENDPOINTS = {
 
 export const DEFAULT_LLM_MODELS = {
   anthropic: "claude-haiku-4-5",
-  openai: "gpt-5.4-mini",
+  // Luna: small model of the 5.6 family (no 5.6-mini/nano exists), repriced
+  // 2026-07-31 to $0.20/$1.20 — 73% cheaper than gpt-5.4-mini ($0.75/$4.50).
+  // Tool-call reliability unproven at swap time; auto-escalation is the net.
+  openai: "gpt-5.6-luna",
   gemini: "gemini-3.1-flash-lite",
   mistral: "mistral-small-latest",
   groq: "llama-3.3-70b-versatile",
   // Mirrors the openai API tiers — the codex backend accepts the general
   // lineup (confirmed via Hermes model picker), and lighter models preserve
   // the subscription's weekly quota on trivial queries.
-  "openai-codex": "gpt-5.4-mini"
+  "openai-codex": "gpt-5.6-luna"
 };
 
 export const POWER_LLM_MODELS = {

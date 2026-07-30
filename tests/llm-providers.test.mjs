@@ -611,7 +611,7 @@ test("codex is zero-cost and OpenAI-compatible; tiers mirror the openai API line
   const ext = initWithExt(makeExtensionAPI(), codexDeps(true));
   assert.deepEqual(getModelCostRates("gpt-5.5", CODEX_PROVIDER_ID), { inputPerM: 0, outputPerM: 0 });
   assert.equal(isOpenAICompatible(CODEX_PROVIDER_ID), true);
-  assert.equal(getLlmModel(ext, CODEX_PROVIDER_ID), "gpt-5.4-mini");
+  assert.equal(getLlmModel(ext, CODEX_PROVIDER_ID), "gpt-5.6-luna");
   assert.equal(getPowerModel(ext, CODEX_PROVIDER_ID), "gpt-5.6-terra");
   assert.equal(getLudicrousModel(ext, CODEX_PROVIDER_ID), "gpt-5.6-sol");
 });
