@@ -107,7 +107,7 @@ Default models by tier:
 
 | Tier | Anthropic | OpenAI | Gemini | Mistral | Groq | OpenAI-Codex (subscription) |
 |---|---|---|---|---|---|---|
-| Mini (default) | claude-haiku-4-5 | gpt-5.4-mini | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile | gpt-5.4-mini |
+| Mini (default) | claude-haiku-4-5 | gpt-5.6-luna | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile | gpt-5.6-luna |
 | Power (`/power`) | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-terra |
 | Ludicrous (`/ludicrous`) | claude-opus-5 | gpt-5.6-sol | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | gpt-5.6-sol |
 
@@ -142,7 +142,7 @@ In addition to the five built-in providers above, you can configure up to three 
 
 Instead of an OpenAI API key, you can authenticate with your **ChatGPT Plus or Pro subscription** — GPT calls then draw on the subscription's included weekly quota rather than per-token API billing. For heavy `/ludicrous` use this can turn hundreds of dollars of monthly API spend into the flat $20/month you may already pay.
 
-**How it works.** Chief of Staff uses OpenAI's Codex device sign-in (the same flow as `codex login --device-auth` and Hermes Agent): run **command palette → Chief of Staff: Connect ChatGPT Subscription (Codex)**, a dialog shows a one-time code, open the sign-in page ([auth.openai.com/codex/device](https://auth.openai.com/codex/device)) from any device, enter the code, and approve. On success, `openai-codex` becomes your primary LLM provider automatically (change it back anytime in settings — it also stays available in the dropdown). Disconnecting restores a working provider (your first configured API key, or a custom slot). Tiers: mini → **gpt-5.4-mini**, power → **gpt-5.6-terra**, ludicrous → **gpt-5.6-sol** — everyday queries preserve your weekly quota and only escalated requests draw on the top model. Requests stream to OpenAI's Codex backend through Roam's shared CORS proxy; tokens are stored in Roam Depot settings and refreshed automatically. Note the ~60s ceiling that proxy imposes — see the last bullet below.
+**How it works.** Chief of Staff uses OpenAI's Codex device sign-in (the same flow as `codex login --device-auth` and Hermes Agent): run **command palette → Chief of Staff: Connect ChatGPT Subscription (Codex)**, a dialog shows a one-time code, open the sign-in page ([auth.openai.com/codex/device](https://auth.openai.com/codex/device)) from any device, enter the code, and approve. On success, `openai-codex` becomes your primary LLM provider automatically (change it back anytime in settings — it also stays available in the dropdown). Disconnecting restores a working provider (your first configured API key, or a custom slot). Tiers: mini → **gpt-5.6-luna**, power → **gpt-5.6-terra**, ludicrous → **gpt-5.6-sol** — everyday queries preserve your weekly quota and only escalated requests draw on the top model. Requests stream to OpenAI's Codex backend through Roam's shared CORS proxy; tokens are stored in Roam Depot settings and refreshed automatically. Note the ~60s ceiling that proxy imposes — see the last bullet below.
 
 **Read this before enabling:**
 
