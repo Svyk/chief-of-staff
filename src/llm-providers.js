@@ -36,7 +36,7 @@ const providerCooldowns = {}; // { provider: expiryTimestampMs } — bounded at 
 // Built-in providers — fixed at compile time. Custom providers
 // (LM Studio, Ollama, OpenAI-compatible servers) are configured at runtime
 // via custom-llm-${n}-* settings; see listCustomProviderIds below.
-export const BUILTIN_LLM_PROVIDERS = ["anthropic", "openai", "gemini", "mistral", "groq"];
+export const BUILTIN_LLM_PROVIDERS = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"];
 
 // Kept for back-compat: index.js uses this for the autoresearch judge,
 // which intentionally selects from built-in providers only.
@@ -149,7 +149,8 @@ export function buildEffectiveFailoverChain(extensionAPI, tier) {
 
 export function isOpenAICompatible(provider) {
   return provider === "openai" || provider === "gemini" || provider === "mistral" || provider === "groq"
-    || isCodexProvider(provider) || isCustomProvider(provider);
+    || provider === "grok" || provider === "kimi"
+|| isCodexProvider(provider) || isCustomProvider(provider);
 }
 
 export function getLlmProvider(extensionAPI) {
@@ -205,7 +206,9 @@ export function getApiKeyForProvider(extensionAPI, provider) {
     anthropic: deps.SETTINGS_KEYS.anthropicApiKey,
     gemini: deps.SETTINGS_KEYS.geminiApiKey,
     mistral: deps.SETTINGS_KEYS.mistralApiKey,
-    groq: deps.SETTINGS_KEYS.groqApiKey
+    groq: deps.SETTINGS_KEYS.groqApiKey,
+    grok: deps.SETTINGS_KEYS.grokApiKey,
+    kimi: deps.SETTINGS_KEYS.kimiApiKey
   };
   const settingKey = keyMap[provider];
   if (settingKey) {
@@ -225,7 +228,10 @@ export function getOpenAiApiKey(extensionAPI) {
   if (dedicated) return sanitizeHeaderValue(dedicated);
   // Fallback: if the legacy key looks like an OpenAI key or provider is openai
   const legacy = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.llmApiKey, "");
-  if (legacy && (legacy.startsWith("sk-") || getLlmProvider(extensionAPI) === "openai")) return sanitizeHeaderValue(legacy);
+  // Moonshot (Kimi) keys also start with sk- — never treat a legacy sk- key
+  // as OpenAI when the selected provider is kimi or grok.
+  const provider = getLlmProvider(extensionAPI);
+  if (legacy && provider !== "kimi" && provider !== "grok" && (legacy.startsWith("sk-") || provider === "openai")) return sanitizeHeaderValue(legacy);
   return "";
 }
 

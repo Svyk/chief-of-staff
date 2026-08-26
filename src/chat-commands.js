@@ -36,7 +36,9 @@ export const CHAT_COMMANDS = [
   // Providers are peers with no usefulness ranking — alphabetical for tidiness.
   { name: "/claude", kind: "flag", summary: "Force the Anthropic provider for this message" },
   { name: "/gemini", kind: "flag", summary: "Force the Google Gemini provider for this message" },
+  { name: "/grok", kind: "flag", summary: "Force the Grok (xAI) provider for this message" },
   { name: "/groq", kind: "flag", summary: "Force the Groq provider for this message" },
+  { name: "/kimi", kind: "flag", summary: "Force the Kimi (Moonshot) provider for this message" },
   { name: "/mistral", kind: "flag", summary: "Force the Mistral provider for this message" },
   { name: "/openai", kind: "flag", summary: "Force the OpenAI provider for this message" },
 ];

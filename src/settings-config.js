@@ -82,7 +82,7 @@ function buildCustomProviderLabel(extensionAPI, id) {
 }
 
 function buildProviderSelectItems(extensionAPI) {
-  const builtins = ["anthropic", "openai", "gemini", "mistral", "groq"];
+  const builtins = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"];
   // ChatGPT-subscription provider appears once connected (mirrors custom slots
   // appearing only once configured). Plain id — no compound label to parse.
   const codex = deps.getCodexAuthStatus?.(extensionAPI)?.connected ? ["openai-codex"] : [];
@@ -245,6 +245,26 @@ export function buildSettingsConfig(extensionAPI) {
         type: "input",
         value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.groqApiKey, ""),
         placeholder: "gsk_..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.grokApiKey,
+      name: "Grok API Key (xAI)",
+      description: "Get yours at console.x.ai. Used for Grok models and as a failover provider.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.grokApiKey, ""),
+        placeholder: "xai-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.kimiApiKey,
+      name: "Kimi API Key (Moonshot)",
+      description: "Get yours at platform.moonshot.ai (platform.kimi.ai). Uses Moonshot's OpenAI-compatible API as a failover provider — not the coding/Anthropic host.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiApiKey, ""),
+        placeholder: "sk-..."
       }
     },
   ];

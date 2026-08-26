@@ -343,6 +343,8 @@ const SETTINGS_KEYS = {
   geminiApiKey: "gemini-api-key",
   mistralApiKey: "mistral-api-key",
   groqApiKey: "groq-api-key",
+  grokApiKey: "grok-api-key",
+  kimiApiKey: "kimi-api-key",
   debugLogging: "debug-logging",
   dryRunMode: "dry-run-mode",
   conversationContext: "conversation-context",
@@ -421,9 +423,9 @@ const LLM_STREAM_CHUNK_TIMEOUT_MS = 60_000; // 60s per-chunk timeout for streami
 const LLM_RESPONSE_TIMEOUT_MS = 90_000; // 90s per-request timeout for non-streaming calls
 const DEFAULT_LLM_PROVIDER = "anthropic";
 const FAILOVER_CHAINS = {
-  mini: ["gemini", "mistral", "openai", "anthropic", "groq"],
-  power: ["gemini", "mistral", "openai", "anthropic", "groq"],
-  ludicrous: ["gemini", "openai", "mistral", "anthropic", "groq"]
+  mini: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi"],
+  power: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi"],
+  ludicrous: ["gemini", "openai", "mistral", "anthropic", "groq", "grok", "kimi"]
 };
 const PROVIDER_COOLDOWN_MS = 60_000;
 const FAILOVER_CONTINUATION_MESSAGE = "Note: You are continuing a task started by another AI model which hit a temporary error. The conversation above contains all data gathered so far. Please complete the task using this context.";
@@ -456,7 +458,12 @@ const LLM_MODEL_COSTS = {
   "mistral-small-latest": [0.10, 0.30],
   "mistral-medium-latest": [0.40, 2.00],
   "mistral-large-2512": [0.50, 1.50],
-  "llama-3.3-70b-versatile": [0.59, 0.79]
+  "llama-3.3-70b-versatile": [0.59, 0.79],
+  "grok-4.3": [1.50, 2.50],
+  "grok-4.6": [2.00, 6.00],
+  "kimi-k2.5": [0.60, 3.00],
+  "kimi-k2.7-code": [0.95, 4.00],
+  "kimi-k3": [3.00, 15.00]
 };
 // Anthropic advisor tool (beta) — model invoked when the executor consults the advisor.
 // Pinned to Opus to maximise the quality delta over the executor (Haiku/Sonnet).
@@ -3742,7 +3749,7 @@ function getCosIntegrationTools() {
           models: {
             type: "array",
             items: { type: "string" },
-            description: "2-4 LLM providers (anthropic, openai, gemini, mistral, groq). Default: auto-selects best 3 with API keys configured."
+            description: "2-4 LLM providers (anthropic, openai, gemini, mistral, groq, grok, kimi). Default: auto-selects best 3 with API keys configured."
           },
           chair: { type: "string", description: "Provider for the synthesis phase. Default: first model in the list." },
           context: { type: "string", description: "Additional context to include with the question." },
@@ -3759,7 +3766,7 @@ function getCosIntegrationTools() {
         }
 
         // Resolve models — auto-select if not provided
-        const validProviders = ["anthropic", "openai", "gemini", "mistral", "groq"];
+        const validProviders = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"];
         let resolved;
         if (Array.isArray(models) && models.length >= 2) {
           resolved = models.filter(m => validProviders.includes(m) && getApiKeyForProvider(extensionAPIRef, m));
@@ -4788,9 +4795,9 @@ async function askChiefOfStaff(userMessage, options = {}) {
   const ludicrousFlag = /(?:^|\s)\/ludicrous(?:\s|$)/i.test(rawPrompt);
   const powerFlag = /(?:^|\s)\/power(?:\s|$)/i.test(rawPrompt);
 
-  // Detect provider override — /claude, /gemini, /openai, /mistral, /groq
-  const PROVIDER_SLASH_MAP = { claude: "anthropic", gemini: "gemini", openai: "openai", mistral: "mistral", groq: "groq" };
-  const providerSlashMatch = rawPrompt.match(/(?:^|\s)\/(claude|gemini|openai|mistral|groq)(?:\s|$)/i);
+  // Detect provider override — /claude, /gemini, /openai, /mistral, /groq, /grok, /kimi
+  const PROVIDER_SLASH_MAP = { claude: "anthropic", gemini: "gemini", openai: "openai", mistral: "mistral", groq: "groq", grok: "grok", kimi: "kimi" };
+  const providerSlashMatch = rawPrompt.match(/(?:^|\s)\/(claude|gemini|openai|mistral|groq|grok|kimi)(?:\s|$)/i);
   const providerOverride = providerSlashMatch ? PROVIDER_SLASH_MAP[providerSlashMatch[1].toLowerCase()] : null;
 
   // Detect /lesson flag — records lessons from the conversation
@@ -4808,7 +4815,7 @@ async function askChiefOfStaff(userMessage, options = {}) {
   let prompt = rawPrompt
     .replace(/(?:^|\s)\/ludicrous(?:\s|$)/i, " ")
     .replace(/(?:^|\s)\/power(?:\s|$)/i, " ")
-    .replace(/(?:^|\s)\/(claude|gemini|openai|mistral|groq)(?:\s|$)/gi, " ")
+    .replace(/(?:^|\s)\/(claude|gemini|openai|mistral|groq|grok|kimi)(?:\s|$)/gi, " ")
     .replace(/(?:^|\s)\/lesson(?:\s|$)/i, " ")
     .replace(/(?:^|\s)\/allow-homoglyph(?:\s|$)/i, " ")
     .trim();
@@ -7336,6 +7343,8 @@ function onload({ extensionAPI }) {
       getSettingString(extensionAPI, SETTINGS_KEYS.geminiApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.mistralApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.groqApiKey, "") ||
+      getSettingString(extensionAPI, SETTINGS_KEYS.grokApiKey, "") ||
+      getSettingString(extensionAPI, SETTINGS_KEYS.kimiApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.llmApiKey, "");
     // A configured custom slot (LM Studio, Ollama, OpenRouter, etc.) or a
     // connected ChatGPT subscription is just as valid an "I have an LLM"

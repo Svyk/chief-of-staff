@@ -4,6 +4,8 @@ export const LLM_API_ENDPOINTS = {
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   mistral: "https://api.mistral.ai/v1/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",
+  grok: "https://api.x.ai/v1/chat/completions",
+  kimi: "https://api.moonshot.ai/v1/chat/completions",
   // ChatGPT-subscription (Codex device OAuth) — Responses API, not chat
   // completions. Single swap point if the Roam CORS proxy can't pass it.
   "openai-codex": "https://chatgpt.com/backend-api/codex/responses"
@@ -18,6 +20,8 @@ export const DEFAULT_LLM_MODELS = {
   gemini: "gemini-3.1-flash-lite",
   mistral: "mistral-small-latest",
   groq: "llama-3.3-70b-versatile",
+  grok: "grok-4.3",
+  kimi: "kimi-k2.5",
   // Mirrors the openai API tiers — the codex backend accepts the general
   // lineup (confirmed via Hermes model picker), and lighter models preserve
   // the subscription's weekly quota on trivial queries.
@@ -33,6 +37,8 @@ export const POWER_LLM_MODELS = {
   gemini: "gemini-3.6-flash",
   mistral: "mistral-medium-latest",
   groq: "llama-3.3-70b-versatile",
+  grok: "grok-4.6",
+  kimi: "kimi-k2.7-code",
   "openai-codex": "gpt-5.6-terra"
 };
 
@@ -44,5 +50,7 @@ export const LUDICROUS_LLM_MODELS = {
   gemini: "gemini-3.1-pro-preview-customtools",
   mistral: "mistral-medium-latest",
   groq: "llama-3.3-70b-versatile",
+  grok: "grok-4.6",
+  kimi: "kimi-k3",
   "openai-codex": "gpt-5.6-sol"
 };

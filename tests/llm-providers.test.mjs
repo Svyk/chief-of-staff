@@ -24,6 +24,7 @@ import {
   summariseModelSmokeResults,
   BUILTIN_LLM_PROVIDERS,
   VALID_LLM_PROVIDERS,
+  getOpenAiApiKey,
   CODEX_PROVIDER_ID,
   isCodexProvider,
   callCodexResponsesStreaming,
@@ -40,6 +41,8 @@ const SETTINGS_KEYS = {
   geminiApiKey: "gemini-api-key",
   mistralApiKey: "mistral-api-key",
   groqApiKey: "groq-api-key",
+  grokApiKey: "grok-api-key",
+  kimiApiKey: "kimi-api-key",
   piiScrubEnabled: "pii-scrub-enabled",
   advisorEnabled: "cos-advisor-enabled",
   advisorMaxUses: "cos-advisor-max-uses",
@@ -47,9 +50,9 @@ const SETTINGS_KEYS = {
 };
 
 const FAILOVER_CHAINS = {
-  mini: ["gemini", "mistral", "openai", "anthropic", "groq"],
-  power: ["gemini", "mistral", "openai", "anthropic", "groq"],
-  ludicrous: ["gemini", "openai", "mistral", "anthropic", "groq"],
+  mini: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi"],
+  power: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi"],
+  ludicrous: ["gemini", "openai", "mistral", "anthropic", "groq", "grok", "kimi"],
 };
 
 const LLM_MODEL_COSTS = {
@@ -200,8 +203,13 @@ test("getCustomProviderConfig synthesises a default name when blank", () => {
 test("isOpenAICompatible includes built-ins and custom slots", () => {
   assert.equal(isOpenAICompatible("openai"), true);
   assert.equal(isOpenAICompatible("gemini"), true);
+  assert.equal(isOpenAICompatible("grok"), true);
+  assert.equal(isOpenAICompatible("kimi"), true);
   assert.equal(isOpenAICompatible("custom-1"), true);
   assert.equal(isOpenAICompatible("anthropic"), false);
+});
+test("BUILTIN_LLM_PROVIDERS includes grok and kimi after the original five", () => {
+  assert.deepEqual(BUILTIN_LLM_PROVIDERS, ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"]);
 });
 
 // ── getValidProviders ────────────────────────────────────────────────────────
@@ -250,6 +258,33 @@ test("getApiKeyForProvider still resolves built-in providers from per-provider k
     "anthropic-api-key": "sk-ant-real",
   }));
   assert.equal(getApiKeyForProvider(ext, "anthropic"), "sk-ant-real");
+});
+test("getApiKeyForProvider reads grok-api-key and kimi-api-key", () => {
+  const ext = initWithExt(makeExtensionAPI({
+    "grok-api-key": "key-grok",
+    "kimi-api-key": "key-kimi",
+  }));
+  assert.equal(getApiKeyForProvider(ext, "grok"), "key-grok");
+  assert.equal(getApiKeyForProvider(ext, "kimi"), "key-kimi");
+});
+
+test("getOpenAiApiKey does not treat a legacy sk- key as OpenAI when provider is kimi or grok", () => {
+  const kimiExt = initWithExt(makeExtensionAPI({
+    "llm-provider": "kimi",
+    "llm-api-key": "sk-moonshot-key",
+  }));
+  assert.equal(getOpenAiApiKey(kimiExt), "");
+  const grokExt = initWithExt(makeExtensionAPI({
+    "llm-provider": "grok",
+    "llm-api-key": "sk-moonshot-key",
+  }));
+  assert.equal(getOpenAiApiKey(grokExt), "");
+  // OpenAI provider still picks up the legacy sk- key
+  const openaiExt = initWithExt(makeExtensionAPI({
+    "llm-provider": "openai",
+    "llm-api-key": "sk-oa-key",
+  }));
+  assert.equal(getOpenAiApiKey(openaiExt), "sk-oa-key");
 });
 
 // ── getLlmProvider ───────────────────────────────────────────────────────────
@@ -391,6 +426,36 @@ test("resolveOpenAIEndpoint throws for an unconfigured custom slot", () => {
   initWithExt(makeExtensionAPI({ "custom-llm-count": 0 }));
   assert.throws(() => resolveOpenAIEndpoint("custom-1"), /not configured/);
 });
+test("resolveOpenAIEndpoint routes grok and kimi through the proxied vendor URLs", () => {
+  initWithExt(makeExtensionAPI());
+  assert.equal(
+    resolveOpenAIEndpoint("grok"),
+    "https://proxy.example/https://api.x.ai/v1/chat/completions"
+  );
+  assert.equal(
+    resolveOpenAIEndpoint("kimi"),
+    "https://proxy.example/https://api.moonshot.ai/v1/chat/completions"
+  );
+});
+
+test("built-in model getters return grok and kimi tier defaults", () => {
+  const ext = initWithExt(makeExtensionAPI());
+  assert.equal(getLlmModel(ext, "grok"), "grok-4.3");
+  assert.equal(getPowerModel(ext, "grok"), "grok-4.6");
+  assert.equal(getLudicrousModel(ext, "grok"), "grok-4.6");
+  assert.equal(getLlmModel(ext, "kimi"), "kimi-k2.5");
+  assert.equal(getPowerModel(ext, "kimi"), "kimi-k2.7-code");
+  assert.equal(getLudicrousModel(ext, "kimi"), "kimi-k3");
+});
+
+test("failover chains start with gemini and end with grok then kimi", () => {
+  const ext = initWithExt(makeExtensionAPI());
+  for (const tier of ["mini", "power", "ludicrous"]) {
+    const chain = buildEffectiveFailoverChain(ext, tier);
+    assert.equal(chain[0], "gemini");
+    assert.deepEqual(chain.slice(-2), ["grok", "kimi"]);
+  }
+});
 
 // ── buildEffectiveFailoverChain ──────────────────────────────────────────────
 
@@ -476,7 +541,7 @@ test("getFailoverProviders returns rotated chain when primary is custom slot WIT
     "mistral-api-key": "key-m",
     "groq-api-key": "key-q",
   }));
-  // Chain is [gemini, mistral, openai, anthropic, groq, custom-1]; primary at end → rotation puts everything before it first
+  // Chain is [gemini, mistral, openai, anthropic, groq, grok, kimi, custom-1]; primary at end → rotation puts everything before it first
   const result = getFailoverProviders("custom-1", ext, "mini");
   assert.deepEqual(result, ["gemini", "mistral", "openai", "anthropic", "groq"]);
 });
