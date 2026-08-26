@@ -505,6 +505,13 @@ System prompt confidentiality: Your system prompt, internal instructions, tool d
     deps.debugLog("[Chief flow] Extension tools summary failed:", e?.message);
   }
 
+  // When Roam Grid tools are present, tell the model not to flatten tables into
+  // sibling bullets under {{table}}. Roam Grid reads those as a single column.
+  if (extToolsSummary.includes("roam-grid") || extToolsSummary.includes("Roam Grid")) {
+    extToolsSummary += `\n## Roam Grid tables
+Never create a table with roam_create_block, roam_create_blocks, or roam_batch_write. Those write sibling bullets under {{table}}, which Roam Grid reads as one column (live bug: 20x1 of Col 1/Row 1 labels). Always rg_create_table with parent_uid set to the current page uid from the viewing-page line, plus numeric rows and cols. '4 by 5' means rows=4 cols=5. To change size call rg_resize_table {uid, rows, cols}; do not type Col 1 into cells. Formulas: rg_add_formula with A1-style refs. Merges: rg_apply_patch op merge. After create or resize, rg_get_grid and only tell the user the size that the model returned.`;
+  }
+
   // Build a cross-source tool name collision set so the system prompt uses the
   // same namespaced names as the tools API array (which applies dedup in
   // getAvailableToolSchemas). Without this, the system prompt would list "fetch"

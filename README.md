@@ -379,6 +379,8 @@ Install **Roam Grid** from Roam Depot if you want grid tools. Chief of Staff wor
 
 Roam Grid registers tools on `window.RoamExtensionTools["roam-grid"]` with display name **Roam Grid**. Chief of Staff discovers them through the existing Extension Tools path (`getExternalExtensionTools`). There is no roam-grid-specific wiring.
 
+Chief of Staff must not flatten tables: it never writes a grid as sibling bullets under `{{table}}` via `roam_create_block`, `roam_create_blocks`, or `roam_batch_write`. Those render as a single column in Roam Grid. It uses `rg_create_table` instead.
+
 All extensions default to disabled. Opt in the same way as any other extension:
 
 1. In **Settings > Chief of Staff**, enable **Show Extension Tools**.
