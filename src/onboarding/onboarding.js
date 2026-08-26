@@ -42,6 +42,9 @@ function loadOnboardingState(extensionAPI, deps) {
     deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.groqApiKey, "") ||
     deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.grokApiKey, "") ||
     deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiApiKey, "") ||
+    deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiCodingApiKey, "") ||
+    deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.deepseekApiKey, "") ||
+    deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaApiKey, "") ||
     deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.llmApiKey, "")
   );
 
@@ -227,6 +230,9 @@ export function launchOnboarding(extensionAPI, deps) {
         deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.groqApiKey, "") ||
         deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.grokApiKey, "") ||
         deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiApiKey, "") ||
+        deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiCodingApiKey, "") ||
+        deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.deepseekApiKey, "") ||
+        deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaApiKey, "") ||
         deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.llmApiKey, "")
       );
       if (hasKey) {

@@ -6,6 +6,14 @@ export const LLM_API_ENDPOINTS = {
   groq: "https://api.groq.com/openai/v1/chat/completions",
   grok: "https://api.x.ai/v1/chat/completions",
   kimi: "https://api.moonshot.ai/v1/chat/completions",
+  // Kimi Code (kimi.com/code) — separate OpenAI-compatible host. Keys
+  // starting with `sk-kimi` 401 on api.moonshot.ai but 200 on api.kimi.com/coding/v1.
+  "kimi-coding": "https://api.kimi.com/coding/v1/chat/completions",
+  deepseek: "https://api.deepseek.com/v1/chat/completions",
+  // Ollama endpoint is resolved at runtime against the `ollama-base-url`
+  // setting (default Ollama Cloud, local http://127.0.0.1:11434/v1). See
+  // resolveOpenAIEndpoint in llm-providers.js.
+  ollama: "https://ollama.com/v1/chat/completions",
   // ChatGPT-subscription (Codex device OAuth) — Responses API, not chat
   // completions. Single swap point if the Roam CORS proxy can't pass it.
   "openai-codex": "https://chatgpt.com/backend-api/codex/responses"
@@ -22,6 +30,13 @@ export const DEFAULT_LLM_MODELS = {
   groq: "llama-3.3-70b-versatile",
   grok: "grok-4.3",
   kimi: "kimi-k2.5",
+  // Kimi Code: one model id serves mini and power tiers; the highspeed
+  // variant is the ludicrous-tier upgrade.
+  "kimi-coding": "kimi-for-coding",
+  deepseek: "deepseek-chat",
+  // Ollama Cloud defaults — overridable via ollama-mini-model /
+  // ollama-power-model / ollama-ludicrous-model settings (llm-providers.js).
+  ollama: "deepseek-v4-flash",
   // Mirrors the openai API tiers — the codex backend accepts the general
   // lineup (confirmed via Hermes model picker), and lighter models preserve
   // the subscription's weekly quota on trivial queries.
@@ -39,6 +54,9 @@ export const POWER_LLM_MODELS = {
   groq: "llama-3.3-70b-versatile",
   grok: "grok-4.6",
   kimi: "kimi-k2.7-code",
+  "kimi-coding": "kimi-for-coding",
+  deepseek: "deepseek-reasoner",
+  ollama: "deepseek-v4-pro",
   "openai-codex": "gpt-5.6-terra"
 };
 
@@ -52,5 +70,8 @@ export const LUDICROUS_LLM_MODELS = {
   groq: "llama-3.3-70b-versatile",
   grok: "grok-4.6",
   kimi: "kimi-k3",
+  "kimi-coding": "kimi-for-coding-highspeed",
+  deepseek: "deepseek-reasoner",
+  ollama: "glm-5.2",
   "openai-codex": "gpt-5.6-sol"
 };

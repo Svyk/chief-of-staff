@@ -345,6 +345,13 @@ const SETTINGS_KEYS = {
   groqApiKey: "groq-api-key",
   grokApiKey: "grok-api-key",
   kimiApiKey: "kimi-api-key",
+  kimiCodingApiKey: "kimi-coding-api-key",
+  deepseekApiKey: "deepseek-api-key",
+  ollamaApiKey: "ollama-api-key",
+  ollamaBaseUrl: "ollama-base-url",
+  ollamaMiniModel: "ollama-mini-model",
+  ollamaPowerModel: "ollama-power-model",
+  ollamaLudicrousModel: "ollama-ludicrous-model",
   debugLogging: "debug-logging",
   dryRunMode: "dry-run-mode",
   conversationContext: "conversation-context",
@@ -423,9 +430,9 @@ const LLM_STREAM_CHUNK_TIMEOUT_MS = 60_000; // 60s per-chunk timeout for streami
 const LLM_RESPONSE_TIMEOUT_MS = 90_000; // 90s per-request timeout for non-streaming calls
 const DEFAULT_LLM_PROVIDER = "anthropic";
 const FAILOVER_CHAINS = {
-  mini: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi"],
-  power: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi"],
-  ludicrous: ["gemini", "openai", "mistral", "anthropic", "groq", "grok", "kimi"]
+  mini: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi", "kimi-coding", "deepseek", "ollama"],
+  power: ["gemini", "mistral", "openai", "anthropic", "groq", "grok", "kimi", "kimi-coding", "deepseek", "ollama"],
+  ludicrous: ["gemini", "openai", "mistral", "anthropic", "groq", "grok", "kimi", "kimi-coding", "deepseek", "ollama"]
 };
 const PROVIDER_COOLDOWN_MS = 60_000;
 const FAILOVER_CONTINUATION_MESSAGE = "Note: You are continuing a task started by another AI model which hit a temporary error. The conversation above contains all data gathered so far. Please complete the task using this context.";
@@ -463,7 +470,18 @@ const LLM_MODEL_COSTS = {
   "grok-4.6": [2.00, 6.00],
   "kimi-k2.5": [0.60, 3.00],
   "kimi-k2.7-code": [0.95, 4.00],
-  "kimi-k3": [3.00, 15.00]
+  "kimi-k3": [3.00, 15.00],
+  // Kimi Code subscription models — list so the cost lookup doesn't throw,
+  // even though billing lives on the kimi.com/code subscription side.
+  "kimi-for-coding": [0.00, 0.00],
+  "kimi-for-coding-highspeed": [0.00, 0.00],
+  // DeepSeek public ballpark pricing (USD per 1M tokens, input/output).
+  "deepseek-chat": [0.28, 0.42],
+  "deepseek-reasoner": [0.55, 2.19],
+  // Ollama Cloud models run on the Ollama subscription — $0 to Chief of Staff.
+  "deepseek-v4-flash": [0.00, 0.00],
+  "deepseek-v4-pro": [0.00, 0.00],
+  "glm-5.2": [0.00, 0.00]
 };
 // Anthropic advisor tool (beta) — model invoked when the executor consults the advisor.
 // Pinned to Opus to maximise the quality delta over the executor (Haiku/Sonnet).
@@ -4795,9 +4813,11 @@ async function askChiefOfStaff(userMessage, options = {}) {
   const ludicrousFlag = /(?:^|\s)\/ludicrous(?:\s|$)/i.test(rawPrompt);
   const powerFlag = /(?:^|\s)\/power(?:\s|$)/i.test(rawPrompt);
 
-  // Detect provider override — /claude, /gemini, /openai, /mistral, /groq, /grok, /kimi
-  const PROVIDER_SLASH_MAP = { claude: "anthropic", gemini: "gemini", openai: "openai", mistral: "mistral", groq: "groq", grok: "grok", kimi: "kimi" };
-  const providerSlashMatch = rawPrompt.match(/(?:^|\s)\/(claude|gemini|openai|mistral|groq|grok|kimi)(?:\s|$)/i);
+  // Detect provider override — /claude, /gemini, /openai, /mistral, /groq,
+  // /grok, /kimi, /kimi-code, /deepseek, /ollama. /kimi-code must be matched
+  // before /kimi in the regex so "kimi-code" isn't captured as "kimi".
+  const PROVIDER_SLASH_MAP = { claude: "anthropic", gemini: "gemini", openai: "openai", mistral: "mistral", groq: "groq", grok: "grok", kimi: "kimi", "kimi-code": "kimi-coding", deepseek: "deepseek", ollama: "ollama" };
+  const providerSlashMatch = rawPrompt.match(/(?:^|\s)\/(claude|gemini|openai|mistral|groq|grok|kimi-code|kimi|deepseek|ollama)(?:\s|$)/i);
   const providerOverride = providerSlashMatch ? PROVIDER_SLASH_MAP[providerSlashMatch[1].toLowerCase()] : null;
 
   // Detect /lesson flag — records lessons from the conversation
@@ -4815,7 +4835,7 @@ async function askChiefOfStaff(userMessage, options = {}) {
   let prompt = rawPrompt
     .replace(/(?:^|\s)\/ludicrous(?:\s|$)/i, " ")
     .replace(/(?:^|\s)\/power(?:\s|$)/i, " ")
-    .replace(/(?:^|\s)\/(claude|gemini|openai|mistral|groq|grok|kimi)(?:\s|$)/gi, " ")
+    .replace(/(?:^|\s)\/(claude|gemini|openai|mistral|groq|grok|kimi-code|kimi|deepseek|ollama)(?:\s|$)/gi, " ")
     .replace(/(?:^|\s)\/lesson(?:\s|$)/i, " ")
     .replace(/(?:^|\s)\/allow-homoglyph(?:\s|$)/i, " ")
     .trim();
@@ -7345,6 +7365,11 @@ function onload({ extensionAPI }) {
       getSettingString(extensionAPI, SETTINGS_KEYS.groqApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.grokApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.kimiApiKey, "") ||
+      getSettingString(extensionAPI, SETTINGS_KEYS.kimiCodingApiKey, "") ||
+      getSettingString(extensionAPI, SETTINGS_KEYS.deepseekApiKey, "") ||
+      // Ollama Cloud counts only when an explicit key is set — localhost
+      // needs no key and is covered by the configured-custom-slot signal.
+      getSettingString(extensionAPI, SETTINGS_KEYS.ollamaApiKey, "") ||
       getSettingString(extensionAPI, SETTINGS_KEYS.llmApiKey, "");
     // A configured custom slot (LM Studio, Ollama, OpenRouter, etc.) or a
     // connected ChatGPT subscription is just as valid an "I have an LLM"

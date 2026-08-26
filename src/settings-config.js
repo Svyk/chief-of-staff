@@ -82,7 +82,7 @@ function buildCustomProviderLabel(extensionAPI, id) {
 }
 
 function buildProviderSelectItems(extensionAPI) {
-  const builtins = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"];
+  const builtins = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi", "kimi-coding", "deepseek", "ollama"];
   // ChatGPT-subscription provider appears once connected (mirrors custom slots
   // appearing only once configured). Plain id — no compound label to parse.
   const codex = deps.getCodexAuthStatus?.(extensionAPI)?.connected ? ["openai-codex"] : [];
@@ -265,6 +265,76 @@ export function buildSettingsConfig(extensionAPI) {
         type: "input",
         value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiApiKey, ""),
         placeholder: "sk-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.kimiCodingApiKey,
+      name: "Kimi Code API Key",
+      description: "Get yours at kimi.com/code. OpenAI-compatible host api.kimi.com/coding/v1 — this is NOT the Moonshot key. A key pasted into the Moonshot field above that starts with sk-kimi will be reused here automatically.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiCodingApiKey, ""),
+        placeholder: "sk-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.deepseekApiKey,
+      name: "DeepSeek API Key",
+      description: "Get yours at platform.deepseek.com. Used for DeepSeek chat and reasoner models via DeepSeek's OpenAI-compatible API.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.deepseekApiKey, ""),
+        placeholder: "sk-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaApiKey,
+      name: "Ollama API Key",
+      description: "Your Ollama Cloud key from ollama.com. Leave blank for local Ollama (a local server needs no key).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaApiKey, ""),
+        placeholder: "ollama-cloud-key"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaBaseUrl,
+      name: "Ollama Base URL",
+      description: "Ollama OpenAI-compatible base URL ending at /v1. Default: Ollama Cloud (https://ollama.com/v1). For a local server use http://127.0.0.1:11434/v1 — localhost calls go direct (no CORS proxy), remote calls go through the Roam CORS proxy.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaBaseUrl, ""),
+        placeholder: "https://ollama.com/v1"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaMiniModel,
+      name: "Ollama Mini Model (optional override)",
+      description: "Model id used for the mini tier when the Ollama provider is selected. Leave blank to use the default (deepseek-v4-flash on Ollama Cloud).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaMiniModel, ""),
+        placeholder: "deepseek-v4-flash"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaPowerModel,
+      name: "Ollama Power Model (optional override)",
+      description: "Model id used for the power tier. Leave blank to use the default (deepseek-v4-pro).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaPowerModel, ""),
+        placeholder: "deepseek-v4-pro"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaLudicrousModel,
+      name: "Ollama Ludicrous Model (optional override)",
+      description: "Model id used for the ludicrous tier. Leave blank to use the default (glm-5.2).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaLudicrousModel, ""),
+        placeholder: "glm-5.2"
       }
     },
   ];
@@ -798,7 +868,7 @@ export function buildSettingsConfig(extensionAPI) {
       {
         id: deps.SETTINGS_KEYS.postWriteShortCircuit,
         name: "End run after a single successful write",
-        description: "ON matches current Chief of Staff behavior: a lone successful write ends the run with a confirmation. OFF lets the model take another turn after one write (needed for TimeBlock batch edits).",
+        description: "ON matches current Chief of Staff: a lone successful write ends the run with a confirmation. OFF lets the model take another turn after one write, so skills that need several graph writes can finish.",
         action: {
           type: "switch",
           value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true)

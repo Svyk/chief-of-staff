@@ -39,6 +39,9 @@ export const CHAT_COMMANDS = [
   { name: "/grok", kind: "flag", summary: "Force the Grok (xAI) provider for this message" },
   { name: "/groq", kind: "flag", summary: "Force the Groq provider for this message" },
   { name: "/kimi", kind: "flag", summary: "Force the Kimi (Moonshot) provider for this message" },
+  { name: "/kimi-code", kind: "flag", summary: "Force the Kimi Code (kimi.com/code) provider for this message" },
+  { name: "/deepseek", kind: "flag", summary: "Force the DeepSeek provider for this message" },
+  { name: "/ollama", kind: "flag", summary: "Force the Ollama (Cloud or local) provider for this message" },
   { name: "/mistral", kind: "flag", summary: "Force the Mistral provider for this message" },
   { name: "/openai", kind: "flag", summary: "Force the OpenAI provider for this message" },
 ];
