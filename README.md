@@ -101,6 +101,7 @@ Open **Settings > Chief of Staff** and fill in:
 - **Debug Logging** — enable verbose console output for troubleshooting
 - **Dry Run** — one-shot toggle that simulates the next mutating tool call without writing anything (auto-disables after one use)
 - **Ludicrous mode failover** — allow escalation to the most expensive models (Opus 5 / GPT-5.6 Sol) when all power-tier providers fail
+- **End run after a single successful write** (Advanced, default on) — a lone successful write ends the run with a confirmation. Turn it off if a skill needs several writes in one go (for example a TimeBlock reshape). `/plan` then go still runs the full plan either way.
 - **Hide COS Pages from Linked References** — automatically filters Chief of Staff namespace pages out of linked references on all non-COS pages. Enabled by default.
 - **Use Linked Dates in CoS Logs** — when enabled, internal CoS log entries (audit log, usage stats, eval scores, corrections, graph hygiene, skill-optimize) prefix each line with a `[[Linked Date]]`. Disable to write plain dates instead — keeps Daily Notes pages from accumulating linked references on mobile. Enabled by default.
 - **Staleness Warning Threshold (days)** — how long a skill or scheduled job can go without being reviewed before it's flagged. A startup toast (debounced to once per 24 hours) lists stale items, and `staleness report` returns the same list on demand. Default `30`. Set to `0` to disable the warnings entirely (the report still works).
@@ -108,7 +109,7 @@ Open **Settings > Chief of Staff** and fill in:
 Default models by tier:
 
 | Tier | Anthropic | OpenAI | Gemini | Mistral | Groq | Grok | Kimi | OpenAI-Codex (subscription) |
-|---|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|---|---|
 | Mini (default) | claude-haiku-4-5 | gpt-5.6-luna | gemini-3.1-flash-lite | mistral-small-latest | llama-3.3-70b-versatile | grok-4.3 | kimi-k2.5 | gpt-5.6-luna |
 | Power (`/power`) | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | mistral-medium-latest | llama-3.3-70b-versatile | grok-4.6 | kimi-k2.7-code | gpt-5.6-terra |
 | Ludicrous (`/ludicrous`) | claude-opus-5 | gpt-5.6-sol | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | grok-4.6 | kimi-k3 | gpt-5.6-sol |

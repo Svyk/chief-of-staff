@@ -150,7 +150,7 @@ export function buildEffectiveFailoverChain(extensionAPI, tier) {
 export function isOpenAICompatible(provider) {
   return provider === "openai" || provider === "gemini" || provider === "mistral" || provider === "groq"
     || provider === "grok" || provider === "kimi"
-|| isCodexProvider(provider) || isCustomProvider(provider);
+    || isCodexProvider(provider) || isCustomProvider(provider);
 }
 
 export function getLlmProvider(extensionAPI) {
