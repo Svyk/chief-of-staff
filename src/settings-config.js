@@ -776,6 +776,15 @@ export function buildSettingsConfig(extensionAPI) {
         }
       },
       {
+        id: deps.SETTINGS_KEYS.postWriteShortCircuit,
+        name: "End run after a single successful write",
+        description: "ON matches current Chief of Staff behavior: a lone successful write ends the run with a confirmation. OFF lets the model take another turn after one write (needed for TimeBlock batch edits).",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true)
+        }
+      },
+      {
         id: deps.SETTINGS_KEYS.dailySpendingCap,
         name: "Daily Spending Cap (USD)",
         description: "Maximum daily LLM API spend in USD. Agent execution halts when this limit is reached. Leave blank for no limit. Resets at midnight. Example: 1.00 = one dollar per day.",

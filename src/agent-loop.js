@@ -191,6 +191,64 @@ export function buildToolCacheKey(toolName, args) {
   catch { return null; }
 }
 
+// ── Post-write short-circuit helpers ───────────────────────────────────────
+
+/**
+ * Decide whether to end the run after a lone successful write.
+ * Pure helper — no deps, no mock.module needed.
+ */
+export function shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames }) {
+  if (settingOn === false) return false;
+  if (approvedPlan) return false;
+  if (!Array.isArray(toolResults) || toolResults.length !== 1) return false;
+  const last = toolResults[0];
+  if (last?.result?.error) return false;
+  const name = last?.toolCall?.name;
+  const isWrite = writeToolNames?.has(name) || (name === "ROAM_EXECUTE" && writeToolNames?.has(last?.toolCall?.arguments?.tool_name));
+  return isWrite === true;
+}
+
+/**
+ * Builds the terse confirmation message shown when short-circuiting after a write.
+ * Mirrors the original specialised copy exactly.
+ */
+export function shortCircuitMessage(toolCall, result) {
+  const toolName = toolCall?.name;
+  const resultData = result || {};
+  if (toolName === "cos_write_draft_skill") {
+    return `Draft skill "${resultData.skill_name || "skill"}" written to Skills page.`;
+  }
+  if (toolName === "cos_update_memory") {
+    const page = resultData.page || "memory";
+    const action = resultData.action || "updated";
+    return `${page} ${action} successfully.`;
+  }
+  if (toolName === "cos_cron_create" && resultData.created) {
+    const cronType = resultData.type || "job";
+    const cronName = resultData.name || "";
+    const cronWhen = resultData.nextRunLocal || resultData.nextRun || "";
+    if (cronType === "reminder") {
+      return cronWhen ? `Reminder set — I'll notify you at ${cronWhen}.` : `Reminder set.`;
+    }
+    return cronWhen
+      ? `Scheduled ${cronType}${cronName ? ` "${cronName}"` : ""} — next run at ${cronWhen}.`
+      : `Scheduled ${cronType}${cronName ? ` "${cronName}"` : ""} successfully.`;
+  }
+  if (toolName === "cos_cron_update" && resultData.updated) {
+    return `Job "${resultData.id || "job"}" updated.`;
+  }
+  if (toolName === "cos_cron_delete" && resultData.deleted) {
+    return `Job "${resultData.id || "job"}" deleted.`;
+  }
+  if (toolName === "cos_cron_delete_jobs" && Array.isArray(resultData.deleted)) {
+    const names = resultData.deleted.map(d => `"${d.name || d.id}"`).join(", ");
+    let text = `Deleted ${resultData.deleted.length} job(s): ${names}.`;
+    if (resultData.notFound?.length) text += ` Not found: ${resultData.notFound.join(", ")}.`;
+    return text;
+  }
+  return `Written successfully.`;
+}
+
 // ── Core agent loop ─────────────────────────────────────────────────────────
 
 /**
@@ -1209,43 +1267,14 @@ export async function runAgentLoop(userMessage, options = {}) {
         };
       }
       const lastToolResult = toolResults[toolResults.length - 1];
-      const isWriteCall_last = deps.WRITE_TOOL_NAMES.has(lastToolResult?.toolCall?.name) || (lastToolResult?.toolCall?.name === "ROAM_EXECUTE" && deps.WRITE_TOOL_NAMES.has(lastToolResult?.toolCall?.arguments?.tool_name));
       // Post-write short-circuit: a single successful write ends the run with a
       // terse confirmation, skipping the summarising LLM call. Suppress it when
       // executing an approved multi-step plan — the plan may have further steps
-      // and terminating after the first write would leave it half-done.
-      if (toolResults.length === 1 && isWriteCall_last && !lastToolResult?.result?.error && !approvedPlan) {
-        const toolName = lastToolResult.toolCall.name;
-        const resultData = lastToolResult.result;
-        let finalText;
-        if (toolName === "cos_write_draft_skill") {
-          finalText = `Draft skill "${resultData?.skill_name || "skill"}" written to Skills page.`;
-        } else if (toolName === "cos_update_memory") {
-          const page = resultData?.page || "memory";
-          const action = resultData?.action || "updated";
-          finalText = `${page} ${action} successfully.`;
-        } else if (toolName === "cos_cron_create" && resultData?.created) {
-          const cronType = resultData.type || "job";
-          const cronName = resultData.name || "";
-          const cronWhen = resultData.nextRunLocal || resultData.nextRun || "";
-          if (cronType === "reminder") {
-            finalText = cronWhen ? `Reminder set — I'll notify you at ${cronWhen}.` : `Reminder set.`;
-          } else {
-            finalText = cronWhen
-              ? `Scheduled ${cronType}${cronName ? ` "${cronName}"` : ""} — next run at ${cronWhen}.`
-              : `Scheduled ${cronType}${cronName ? ` "${cronName}"` : ""} successfully.`;
-          }
-        } else if (toolName === "cos_cron_update" && resultData?.updated) {
-          finalText = `Job "${resultData.id || "job"}" updated.`;
-        } else if (toolName === "cos_cron_delete" && resultData?.deleted) {
-          finalText = `Job "${resultData.id || "job"}" deleted.`;
-        } else if (toolName === "cos_cron_delete_jobs" && Array.isArray(resultData?.deleted)) {
-          const names = resultData.deleted.map(d => `"${d.name || d.id}"`).join(", ");
-          finalText = `Deleted ${resultData.deleted.length} job(s): ${names}.`;
-          if (resultData.notFound?.length) finalText += ` Not found: ${resultData.notFound.join(", ")}.`;
-        } else {
-          finalText = `Written successfully.`;
-        }
+      // and terminating after the first write would leave it half-done. Gated on
+      // the "post-write-short-circuit" advanced setting (default ON).
+      const settingOn = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true);
+      if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES })) {
+        const finalText = shortCircuitMessage(lastToolResult.toolCall, lastToolResult.result);
         deps.debugLog("[Chief flow] runAgentLoop short-circuit: write tool succeeded, skipping final LLM call.");
         trace.finishedAt = Date.now();
         trace.resultTextPreview = finalText;

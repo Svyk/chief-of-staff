@@ -20,6 +20,8 @@ import {
   runAgentLoop,
   runAgentLoopWithFailover,
   buildToolCacheKey,
+  shouldShortCircuitAfterWrite,
+  shortCircuitMessage,
 } from "../src/agent-loop.js";
 
 // ── Test helpers ────────────────────────────────────────────────────────────
@@ -346,5 +348,246 @@ describe("buildToolCacheKey", () => {
       timeMin: "00:00:00"
     });
     assert.strictEqual(key1, key2);
+  });
+});
+
+// ── Post-write short-circuit helpers ───────────────────────────────────────
+
+const SHORT_WRITE_TOOL_NAMES = new Set([
+  "roam_create_block",
+  "roam_update_block",
+  "cos_write_draft_skill",
+  "cos_update_memory",
+  "cos_cron_create",
+  "cos_cron_update",
+  "cos_cron_delete",
+  "cos_cron_delete_jobs",
+]);
+
+function loneWrite({ name, args, result }) {
+  return [{ toolCall: { name, arguments: args || {} }, result: result || {} }];
+}
+
+describe("shouldShortCircuitAfterWrite", () => {
+  it("returns true for a lone roam_create_block success when settingOn true", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      true
+    );
+  });
+
+  it("returns true when settingOn is undefined (treated as ON)", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: undefined,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      true
+    );
+  });
+
+  it("returns false when settingOn is false (OFF continues)", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: false,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+  });
+
+  it("returns false when approvedPlan is truthy even if setting ON", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: "a plan",
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: { plan: true },
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+  });
+
+  it("returns true for approvedPlan null / undefined / empty string when ON", () => {
+    for (const approvedPlan of [null, undefined, ""]) {
+      assert.equal(
+        shouldShortCircuitAfterWrite({
+          toolResults: loneWrite({ name: "roam_create_block" }),
+          approvedPlan,
+          settingOn: true,
+          writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        }),
+        true,
+        `expected short-circuit for approvedPlan ${JSON.stringify(approvedPlan)}`
+      );
+    }
+  });
+
+  it("returns false for two tools in one iteration", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: [
+          { toolCall: { name: "roam_search" }, result: {} },
+          { toolCall: { name: "roam_create_block" }, result: {} },
+        ],
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+  });
+
+  it("returns false for a lone read (tool not in write set)", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_search" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+  });
+
+  it("returns false when the result has an error", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: [{ toolCall: { name: "roam_create_block" }, result: { error: "boom" } }],
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+  });
+
+  it("returns true for ROAM_EXECUTE wrapping an inner write tool", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: [{ toolCall: { name: "ROAM_EXECUTE", arguments: { tool_name: "roam_update_block" } }, result: {} }],
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      true
+    );
+  });
+
+  it("returns false for ROAM_EXECUTE wrapping a non-write tool", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: [{ toolCall: { name: "ROAM_EXECUTE", arguments: { tool_name: "roam_search" } }, result: {} }],
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      false
+    );
+  });
+});
+
+describe("shortCircuitMessage", () => {
+  it("returns Written successfully. for a plain write", () => {
+    assert.equal(shortCircuitMessage({ name: "roam_create_block" }, {}), "Written successfully.");
+  });
+
+  it("returns generic for a specialised tool without the extra flag", () => {
+    assert.equal(shortCircuitMessage({ name: "cos_cron_create" }, {}), "Written successfully.");
+  });
+
+  it("returns generic for ROAM_EXECUTE wrapping a write", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "ROAM_EXECUTE", arguments: { tool_name: "roam_update_block" } }, {}),
+      "Written successfully."
+    );
+  });
+
+  it("cos_write_draft_skill", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_write_draft_skill" }, { skill_name: "MySkill" }),
+      "Draft skill \"MySkill\" written to Skills page."
+    );
+  });
+
+  it("cos_update_memory", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_update_memory" }, { page: "MyPage", action: "created" }),
+      "MyPage created successfully."
+    );
+  });
+
+  it("cos_cron_create with created + reminder + when", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_create" }, { created: true, type: "reminder", nextRunLocal: "09:00" }),
+      "Reminder set — I'll notify you at 09:00."
+    );
+  });
+
+  it("cos_cron_create with created + reminder without when", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_create" }, { created: true, type: "reminder" }),
+      "Reminder set."
+    );
+  });
+
+  it("cos_cron_create with created + other type with when", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_create" }, { created: true, type: "cron", name: "Backup", nextRunLocal: "10:00" }),
+      "Scheduled cron \"Backup\" — next run at 10:00."
+    );
+  });
+
+  it("cos_cron_create with created + other type without when", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_create" }, { created: true, type: "cron", name: "Backup" }),
+      "Scheduled cron \"Backup\" successfully."
+    );
+  });
+
+  it("cos_cron_update with updated", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_update" }, { updated: true, id: "job-1" }),
+      "Job \"job-1\" updated."
+    );
+  });
+
+  it("cos_cron_delete with deleted", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_delete" }, { deleted: true, id: "job-2" }),
+      "Job \"job-2\" deleted."
+    );
+  });
+
+  it("cos_cron_delete_jobs with deleted array", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_delete_jobs" }, { deleted: [{ name: "A" }, { name: "B" }] }),
+      "Deleted 2 job(s): \"A\", \"B\"."
+    );
+  });
+
+  it("cos_cron_delete_jobs with deleted array and notFound", () => {
+    assert.equal(
+      shortCircuitMessage({ name: "cos_cron_delete_jobs" }, { deleted: [{ name: "A" }], notFound: ["missing"] }),
+      "Deleted 1 job(s): \"A\". Not found: missing."
+    );
   });
 });

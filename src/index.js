@@ -392,7 +392,8 @@ const SETTINGS_KEYS = {
   advisorEnabled: "cos-advisor-enabled",
   advisorMaxUses: "cos-advisor-max-uses",
   advisorMiniOnly: "cos-advisor-mini-only",
-  llmModelSmokeResults: "llm-model-smoke-results"
+  llmModelSmokeResults: "llm-model-smoke-results",
+  postWriteShortCircuit: "post-write-short-circuit"
 };
 const TOOLS_SCHEMA_VERSION = 3;
 const AUTH_POLL_INTERVAL_MS = 9000;
@@ -6335,6 +6336,9 @@ function onload({ extensionAPI }) {
   }
   if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.skillAutoresearchTokenGuard) === undefined) {
     extensionAPI.settings.set(SETTINGS_KEYS.skillAutoresearchTokenGuard, true);
+  }
+  if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.postWriteShortCircuit) === undefined) {
+    extensionAPI.settings.set(SETTINGS_KEYS.postWriteShortCircuit, true);
   }
 
   initUsageTracking({
