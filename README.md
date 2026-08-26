@@ -59,7 +59,7 @@ Here's what crosses the network when something does run:
 
 **Asking for help** — A dedicated remote MCP server contains semantically chunked documentation from the COS readme, other extension READMEs, and Roam help articles. When you ask "how do I connect to remote MCP servers?" this is where the query goes. It's hosted on a Supabase database controlled by the extension author.
 
-**What it can do inside your graph** — When you ask Chief of Staff to do something, it has access to Roam tools that can search blocks, read pages, create/edit/delete blocks, create pages, manage TODOs, and navigate your graph. If Better Tasks is installed, it can also search, create, and modify tasks with full attribute support. These tools only run during an active request — they don't scan or index your graph in the background by default.
+**What it can do inside your graph** — When you ask Chief of Staff to do something, it has access to Roam tools that can search blocks, read pages, create/edit/delete blocks, create pages, manage TODOs, and navigate your graph. If Better Tasks is installed, it can also search, create, and modify tasks with full attribute support. If Roam Grid is installed, its `rg_*` tools show up through the same Extension Tools path as other extensions once you enable the **Roam Grid** toggle (off by default). These tools only run during an active request — they don't scan or index your graph in the background by default.
 
 **Safety defaults** — Any action that modifies your graph (creating, editing, or deleting blocks) requires your explicit approval via a confirmation prompt. Read-only operations (searching, fetching) proceed automatically.
 
@@ -76,6 +76,7 @@ For full technical details on security measures, injection defences, and credent
 | At least one LLM API key (Anthropic, OpenAI, Gemini, Mistral, Groq, Grok, Kimi Moonshot, Kimi Code, DeepSeek, Ollama Cloud), **or** a ChatGPT Plus/Pro subscription (see [ChatGPT subscription auth](#chatgpt-subscription-auth-experimental)), **or** a local Ollama server, **or** a custom OpenAI-compatible endpoint (LM Studio, OpenRouter, vLLM, …) | API keys use direct browser fetch — incurs API costs at your provider's rates. Groq requires a paid plan (Dev tier or above) — the free tier's token-per-minute limit is too low. ChatGPT subscription auth draws on the plan's weekly quota instead of API billing (experimental). Kimi Code, Ollama Cloud, and ChatGPT subscription calls are metered as zero-cost in Chief of Staff (billing lives on the subscription side). Local servers (LM Studio, Ollama on localhost) cost nothing and run offline. |
 | Composio account + API key | Only required for external tool integrations. Graph and task features work without it. |
 | [Better Tasks](https://github.com/mlava/recurring-tasks) extension | Only required for Better Tasks integration. Plain TODO search works without it. |
+| Roam Grid extension | Only required for grid tools (`rg_*`). Chief of Staff works without it. |
 
 ---
 
@@ -372,6 +373,20 @@ The tool is now available to the assistant. Ask it to "fetch https://example.com
 
 > **Note:** Cloudflare's free tier has daily usage limits for Browser Rendering. If you hit a rate limit (HTTP 429), wait for the daily reset.
 
+### 6. Roam Grid (optional)
+
+Install **Roam Grid** from Roam Depot if you want grid tools. Chief of Staff works without it.
+
+Roam Grid registers tools on `window.RoamExtensionTools["roam-grid"]` with display name **Roam Grid**. Chief of Staff discovers them through the existing Extension Tools path (`getExternalExtensionTools`). There is no roam-grid-specific wiring.
+
+All extensions default to disabled. Opt in the same way as any other extension:
+
+1. In **Settings > Chief of Staff**, enable **Show Extension Tools**.
+2. Turn on the **Roam Grid** toggle (off by default).
+3. Run **Chief of Staff: Refresh Extension Tools** from the command palette, or `/doctor`, so discovery is current.
+
+Tool names: `rg_list_grids`, `rg_get_grid`, `rg_enhance_table`, `rg_restore_native`, `rg_create_table`, `rg_set_cell`, `rg_add_formula`, `rg_apply_patch`, `rg_list_templates`, `rg_create_from_template`.
+
 ### Recovery — starting over
 
 Roam Depot stores extension settings in your browser's IndexedDB, which means they **survive uninstall and reinstall**. If you end up with a poisoned configuration — a malformed custom LLM endpoint, a stuck OAuth token, an MCP server that crashes the agent loop — uninstalling the extension does not give you a clean slate.
@@ -418,7 +433,7 @@ Use this only as a recovery hatch — there's no undo, and you will need to re-e
 | **Chief of Staff: Connect Remote OAuth Server** | Starts the OAuth sign-in flow for a remote MCP server configured with auth type "oauth". |
 | **Chief of Staff: Disconnect Remote OAuth Server** | Clears stored OAuth credentials and disconnects a remote server. |
 | **Chief of Staff: Review MCP Schema Changes** | Shows the schema diff for any MCP server suspended after an unexpected tool schema change, and lets you accept or keep it blocked. |
-| **Chief of Staff: Refresh Extension Tools** | Re-discovers tools registered by other extensions on `window.RoamExtensionTools`. |
+| **Chief of Staff: Refresh Extension Tools** | Re-discovers tools registered by other extensions on `window.RoamExtensionTools`. After you enable an extension's toggle (for example **Roam Grid**), run this or `/doctor` so those tools are callable. |
 | **Chief of Staff: Show Stored Tool Config** | Logs the current tool configuration to the browser console. |
 | **Chief of Staff: Show Last Run Trace** | Logs the most recent agent run (iterations, tool calls, timing) to the browser console. |
 | **Chief of Staff: Debug Runtime Stats** | Logs current runtime state (cache sizes, connection status, conversation turns) to the browser console. |
