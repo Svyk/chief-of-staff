@@ -505,11 +505,24 @@ System prompt confidentiality: Your system prompt, internal instructions, tool d
     deps.debugLog("[Chief flow] Extension tools summary failed:", e?.message);
   }
 
-  // When Roam Grid tools are present, tell the model not to flatten tables into
-  // sibling bullets under {{table}}. Roam Grid reads those as a single column.
+  // When Roam Grid tools are present, teach TABLE BASICS (not only create):
+  // never flatten tables into sibling bullets under {{table}}, which Roam Grid
+  // reads as a single column. Do not mention rg_apply_patch for merges.
   if (extToolsSummary.includes("roam-grid") || extToolsSummary.includes("Roam Grid")) {
     extToolsSummary += `\n## Roam Grid tables
-Never create a table with roam_create_block, roam_create_blocks, or roam_batch_write. Those write sibling bullets under {{table}}, which Roam Grid reads as one column (live bug: 20x1 of Col 1/Row 1 labels). Always rg_create_table with parent_uid set to the current page uid from the viewing-page line, plus numeric rows and cols. '4 by 5' means rows=4 cols=5. To change size call rg_resize_table {uid, rows, cols}; do not type Col 1 into cells. Formulas: rg_add_formula with A1-style refs. Merges: rg_apply_patch op merge. After create or resize, rg_get_grid and only tell the user the size that the model returned.`;
+Never create or reshape a table with roam_create_block, roam_create_blocks, or roam_batch_write. Sibling bullets under {{table}} become one column (live bug vm6TduElh: 20x1 of Col 1 labels). Use Roam Grid tools instead.
+
+Create: rg_create_table with parent_uid set to the current page uid from the viewing-page line, plus numeric rows and cols. '4 by 5' means rows=4 cols=5.
+
+Size: rg_resize_table, or rg_insert_rows / rg_insert_cols / rg_delete_rows / rg_delete_cols (same as the toolbar + Row / + Col). Do not type Col 1 into cells to fake columns.
+
+Read: rg_get_grid, rg_get_cell (value is computed; raw is the formula).
+
+Write: rg_set_cell, rg_fill (2D array), rg_add_formula with A1 refs (=A1+B1, =SUM(A1:A3)).
+
+Layout: rg_merge / rg_unmerge, rg_sort col+asc|desc, rg_insert_chart type+range, rg_export_grid csv|tsv|markdown|json.
+
+After any mutate, call rg_get_grid and report ONLY the returned rows x cols. Do not invent Col 1 labels instead of columns.`;
   }
 
   // Build a cross-source tool name collision set so the system prompt uses the

@@ -387,7 +387,7 @@ All extensions default to disabled. Opt in the same way as any other extension:
 2. Turn on the **Roam Grid** toggle (off by default).
 3. Run **Chief of Staff: Refresh Extension Tools** from the command palette, or `/doctor`, so discovery is current.
 
-Tool names: `rg_list_grids`, `rg_get_grid`, `rg_enhance_table`, `rg_restore_native`, `rg_create_table`, `rg_set_cell`, `rg_add_formula`, `rg_apply_patch`, `rg_list_templates`, `rg_create_from_template`.
+Tool names: `rg_list_grids`, `rg_get_grid`, `rg_get_cell`, `rg_enhance_table`, `rg_restore_native`, `rg_create_table`, `rg_resize_table`, `rg_insert_rows`, `rg_insert_cols`, `rg_delete_rows`, `rg_delete_cols`, `rg_set_cell`, `rg_fill`, `rg_add_formula`, `rg_merge`, `rg_unmerge`, `rg_sort`, `rg_insert_chart`, `rg_export_grid`, `rg_apply_patch`, `rg_list_templates`, `rg_create_from_template`.
 
 ### Recovery — starting over
 
