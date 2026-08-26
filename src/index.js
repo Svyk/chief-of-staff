@@ -210,6 +210,7 @@ import {
   initSettingsConfig,
   buildSettingsConfig,
   remountSettingsPanel,
+  clampSkillMaxIterations,
 } from "./settings-config.js";
 import {
   initOpenAiCodexAuth,
@@ -1404,7 +1405,6 @@ function getSettingNumber(extensionAPI, key, fallbackValue = 0) {
  *   - below 8 → 8, above 40 → 40
  *   - integers and numeric strings in range pass through (floor if float)
  */
-export { clampSkillMaxIterations } from "./settings-config.js";
 
 /**
  * Reads the skill-max-iterations setting, falling back through the raw stored
