@@ -402,7 +402,10 @@ const SETTINGS_KEYS = {
   advisorMaxUses: "cos-advisor-max-uses",
   advisorMiniOnly: "cos-advisor-mini-only",
   llmModelSmokeResults: "llm-model-smoke-results",
-  postWriteShortCircuit: "post-write-short-circuit"
+  postWriteShortCircuit: "post-write-short-circuit",
+  claimedActionEscalationAllProviders: "claimed-action-escalation-all-providers",
+  skillMaxIterations: "skill-max-iterations",
+  skillContinueAfterWrite: "skill-continue-after-write"
 };
 const TOOLS_SCHEMA_VERSION = 3;
 const AUTH_POLL_INTERVAL_MS = 9000;
@@ -1391,6 +1394,28 @@ function getSettingNumber(extensionAPI, key, fallbackValue = 0) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallbackValue;
+}
+
+/**
+ * Clamp the skill max iterations setting to 8–40 with a fallback of 16.
+ * Pure helper — re-exported from settings-config.js so tests can import it
+ * without a full module mock.
+ *   - undefined / null / "" / NaN / non-numeric → 16
+ *   - below 8 → 8, above 40 → 40
+ *   - integers and numeric strings in range pass through (floor if float)
+ */
+export { clampSkillMaxIterations } from "./settings-config.js";
+
+/**
+ * Reads the skill-max-iterations setting, falling back through the raw stored
+ * value (number or numeric string) to the clamp default (16). Used as a live
+ * getter on the agent-loop deps object so a settings change applies without a
+ * full extension rewrite.
+ */
+function getSkillMaxIterations() {
+  const ext = extensionAPIRef;
+  const raw = ext?.settings?.get?.(SETTINGS_KEYS.skillMaxIterations);
+  return clampSkillMaxIterations(raw);
 }
 
 function getSettingBool(extensionAPI, key, fallbackValue = false) {
@@ -6367,6 +6392,12 @@ function onload({ extensionAPI }) {
   if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.postWriteShortCircuit) === undefined) {
     extensionAPI.settings.set(SETTINGS_KEYS.postWriteShortCircuit, true);
   }
+  if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.claimedActionEscalationAllProviders) === undefined) {
+    extensionAPI.settings.set(SETTINGS_KEYS.claimedActionEscalationAllProviders, true);
+  }
+  if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.skillContinueAfterWrite) === undefined) {
+    extensionAPI.settings.set(SETTINGS_KEYS.skillContinueAfterWrite, true);
+  }
 
   initUsageTracking({
     SETTINGS_KEYS,
@@ -7066,7 +7097,8 @@ function onload({ extensionAPI }) {
     findSkillEntryByName,
     getAvailableToolSchemas,
     runAgentLoopWithFailover,
-    SETTINGS_KEYS, MAX_AGENT_ITERATIONS_SKILL,
+    SETTINGS_KEYS,
+    get MAX_AGENT_ITERATIONS_SKILL() { return getSkillMaxIterations(); },
     MEMORY_PAGE_TITLES_BASE, MEMORY_TOTAL_MAX_CHARS, SOURCE_TOOL_NAME_MAP,
     getApiKeyForProvider: (ext, p) => getApiKeyForProvider(ext, p),
     isProviderCoolingDown,
@@ -7117,7 +7149,7 @@ function onload({ extensionAPI }) {
     getToastTheme,
     isUnloadInProgress: () => unloadInProgress,
     MAX_AGENT_ITERATIONS,
-    MAX_AGENT_ITERATIONS_SKILL,
+    get MAX_AGENT_ITERATIONS_SKILL() { return getSkillMaxIterations(); },
     MAX_TOOL_CALLS_PER_ITERATION,
     MAX_TOOL_CALLS_PER_ITERATION_SKILL,
     MAX_CALLS_PER_TOOL_PER_LOOP,

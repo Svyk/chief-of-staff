@@ -20,9 +20,11 @@ import {
   runAgentLoop,
   runAgentLoopWithFailover,
   buildToolCacheKey,
+  shouldEscalateClaimedAction,
   shouldShortCircuitAfterWrite,
   shortCircuitMessage,
 } from "../src/agent-loop.js";
+import { clampSkillMaxIterations } from "../src/settings-config.js";
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -74,7 +76,13 @@ function makeDeps(overrides = {}) {
     SKILL_MAX_OUTPUT_TOKENS: 4096,
     LUDICROUS_MAX_OUTPUT_TOKENS: 8192,
     MAX_AGENT_MESSAGES_CHAR_BUDGET: 70000,
-    SETTINGS_KEYS: { ludicrousModeEnabled: "ludicrous-mode-enabled" },
+    SETTINGS_KEYS: {
+      ludicrousModeEnabled: "ludicrous-mode-enabled",
+      postWriteShortCircuit: "post-write-short-circuit",
+      claimedActionEscalationAllProviders: "claimed-action-escalation-all-providers",
+      skillContinueAfterWrite: "skill-continue-after-write",
+      skillMaxIterations: "skill-max-iterations",
+    },
     INBOX_READ_ONLY_TOOL_ALLOWLIST: new Set(["roam_search"]),
     WRITE_TOOL_NAMES: new Set(["roam_create_block", "roam_update_block"]),
     ...overrides,
@@ -502,6 +510,217 @@ describe("shouldShortCircuitAfterWrite", () => {
       }),
       false
     );
+  });
+
+  // ── skill-continue-after-write ────────────────────────────────────────────
+  // When a skill is active and skillContinueAfterWrite is ON (or undefined),
+  // the skill may take another turn even if the one-write switch is ON.
+  it("returns false when skillActive + skillContinueAfterWrite ON + lone write + settingOn true", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        skillActive: true,
+        skillContinueAfterWrite: true,
+      }),
+      false
+    );
+  });
+
+  it("returns false when skillActive + skillContinueAfterWrite undefined (treated as ON) + lone write + settingOn true", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        skillActive: true,
+      }),
+      false
+    );
+  });
+
+  // When skillContinueAfterWrite is OFF, skills obey the one-write switch.
+  it("returns true when skillActive + skillContinueAfterWrite false + settingOn true + lone write", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        skillActive: true,
+        skillContinueAfterWrite: false,
+      }),
+      true
+    );
+  });
+
+  // Casual chat (skillActive false/undefined) still short-circuits when
+  // post-write is ON, even if skillContinueAfterWrite is ON.
+  it("returns true for casual chat (skillActive false) + settingOn true + lone write even when skillContinueAfterWrite ON", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        skillActive: false,
+        skillContinueAfterWrite: true,
+      }),
+      true
+    );
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        skillActive: undefined,
+        skillContinueAfterWrite: true,
+      }),
+      true
+    );
+  });
+
+  // Existing callers that omit the new args must still short-circuit for casual chat.
+  it("returns true for casual chat when skillActive/skillContinueAfterWrite are omitted (back-compat)", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+      }),
+      true
+    );
+  });
+});
+
+// ── Claimed-action escalation helper ───────────────────────────────────────
+
+describe("shouldEscalateClaimedAction", () => {
+  const providers = ["grok", "kimi", "ollama", "openai", "anthropic", "gemini"];
+
+  // allProviders ON (default) + mini + sessionCount>=2 → true for every provider
+  for (const provider of providers) {
+    it(`returns true when allProviders ON + provider ${provider} + mini + sessionCount 2`, () => {
+      assert.equal(
+        shouldEscalateClaimedAction({ provider, effectiveTier: "mini", sessionCount: 2, allProviders: true }),
+        true,
+        `expected escalation for provider ${provider}`
+      );
+    });
+  }
+
+  // allProviders undefined (treated as ON) + mini + sessionCount>=2 → true for non-gemini
+  for (const provider of ["grok", "kimi", "ollama", "openai", "anthropic"]) {
+    it(`returns true when allProviders undefined + provider ${provider} + mini + sessionCount 2`, () => {
+      assert.equal(
+        shouldEscalateClaimedAction({ provider, effectiveTier: "mini", sessionCount: 2 }),
+        true,
+        `expected escalation for provider ${provider}`
+      );
+    });
+  }
+
+  // allProviders OFF + provider gemini + mini + sessionCount>=2 → true (old Gemini behavior)
+  it("returns true when allProviders OFF + provider gemini + mini + sessionCount 2 (legacy)", () => {
+    assert.equal(
+      shouldEscalateClaimedAction({ provider: "gemini", effectiveTier: "mini", sessionCount: 2, allProviders: false }),
+      true
+    );
+  });
+
+  // allProviders OFF + non-gemini + mini + sessionCount>=2 → false
+  for (const provider of ["grok", "kimi", "ollama", "openai", "anthropic"]) {
+    it(`returns false when allProviders OFF + provider ${provider} + mini + sessionCount 2`, () => {
+      assert.equal(
+        shouldEscalateClaimedAction({ provider, effectiveTier: "mini", sessionCount: 2, allProviders: false }),
+        false,
+        `expected no escalation for provider ${provider}`
+      );
+    });
+  }
+
+  // sessionCount < 2 → false even when ON
+  it("returns false when sessionCount < 2 even when allProviders ON + mini", () => {
+    assert.equal(
+      shouldEscalateClaimedAction({ provider: "grok", effectiveTier: "mini", sessionCount: 1, allProviders: true }),
+      false
+    );
+    assert.equal(
+      shouldEscalateClaimedAction({ provider: "gemini", effectiveTier: "mini", sessionCount: 0, allProviders: true }),
+      false
+    );
+  });
+
+  // tier !== mini → false even when ON
+  it("returns false when tier is not mini even when allProviders ON + sessionCount>=2", () => {
+    assert.equal(
+      shouldEscalateClaimedAction({ provider: "grok", effectiveTier: "power", sessionCount: 2, allProviders: true }),
+      false
+    );
+    assert.equal(
+      shouldEscalateClaimedAction({ provider: "gemini", effectiveTier: "power", sessionCount: 5, allProviders: true }),
+      false
+    );
+  });
+});
+
+// ── Skill max iterations clamp ──────────────────────────────────────────────
+
+describe("clampSkillMaxIterations", () => {
+  it("returns 16 for undefined / null / empty string", () => {
+    assert.equal(clampSkillMaxIterations(undefined), 16);
+    assert.equal(clampSkillMaxIterations(null), 16);
+    assert.equal(clampSkillMaxIterations(""), 16);
+  });
+
+  it("returns 16 for NaN / non-numeric strings", () => {
+    assert.equal(clampSkillMaxIterations(NaN), 16);
+    assert.equal(clampSkillMaxIterations("abc"), 16);
+    assert.equal(clampSkillMaxIterations({}), 16);
+  });
+
+  it("returns 8 as the minimum (below 8 clamps to 8)", () => {
+    assert.equal(clampSkillMaxIterations(7), 8);
+    assert.equal(clampSkillMaxIterations(0), 8);
+    assert.equal(clampSkillMaxIterations(-5), 8);
+    assert.equal(clampSkillMaxIterations("7"), 8);
+  });
+
+  it("returns 40 as the maximum (above 40 clamps to 40)", () => {
+    assert.equal(clampSkillMaxIterations(99), 40);
+    assert.equal(clampSkillMaxIterations(1000), 40);
+    assert.equal(clampSkillMaxIterations("99"), 40);
+  });
+
+  it("passes through integers in range", () => {
+    assert.equal(clampSkillMaxIterations(16), 16);
+    assert.equal(clampSkillMaxIterations(8), 8);
+    assert.equal(clampSkillMaxIterations(40), 40);
+    assert.equal(clampSkillMaxIterations(20), 20);
+  });
+
+  it("passes through numeric strings in range (floors floats)", () => {
+    assert.equal(clampSkillMaxIterations("12"), 12);
+    assert.equal(clampSkillMaxIterations("16"), 16);
+    assert.equal(clampSkillMaxIterations("8"), 8);
+    assert.equal(clampSkillMaxIterations("40"), 40);
+  });
+
+  it("floors floats in range", () => {
+    assert.equal(clampSkillMaxIterations(12.9), 12);
+    assert.equal(clampSkillMaxIterations(16.5), 16);
+    assert.equal(clampSkillMaxIterations("20.99"), 20);
+  });
+
+  it("clamps floats outside the range", () => {
+    assert.equal(clampSkillMaxIterations(7.5), 8);
+    assert.equal(clampSkillMaxIterations(40.5), 40);
+    assert.equal(clampSkillMaxIterations(99.9), 40);
   });
 });
 

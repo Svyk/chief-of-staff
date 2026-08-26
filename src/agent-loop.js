@@ -194,11 +194,33 @@ export function buildToolCacheKey(toolName, args) {
 // ── Post-write short-circuit helpers ───────────────────────────────────────
 
 /**
+ * Decide whether a claimed-action-without-tool-call escalation should fire.
+ * Pure helper — no deps, no mock.module needed.
+ *
+ * When `allProviders` is ON (default, including undefined): any mini-tier
+ * provider with sessionCount >= 2 escalates to power. When OFF: only the
+ * legacy Gemini-only trigger fires. Still requires effectiveTier === "mini"
+ * and sessionCount >= 2.
+ */
+export function shouldEscalateClaimedAction({ provider, effectiveTier, sessionCount, allProviders }) {
+  if (effectiveTier !== "mini") return false;
+  if (!(sessionCount >= 2)) return false;
+  if (allProviders !== false) return true;
+  // allProviders OFF: legacy Gemini-only gate
+  return provider === "gemini";
+}
+
+/**
  * Decide whether to end the run after a lone successful write.
  * Pure helper — no deps, no mock.module needed.
+ *
+ * `skillContinueAfterWrite` (default ON, including undefined): when a skill
+ * is active, the skill may take another turn even if the one-write switch is
+ * ON. Casual chat (skillActive false/undefined) still short-circuits.
  */
-export function shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames }) {
+export function shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames, skillActive, skillContinueAfterWrite }) {
   if (settingOn === false) return false;
+  if (skillContinueAfterWrite !== false && skillActive) return false;
   if (approvedPlan) return false;
   if (!Array.isArray(toolResults) || toolResults.length !== 1) return false;
   const last = toolResults[0];
@@ -793,13 +815,20 @@ export async function runAgentLoop(userMessage, options = {}) {
             const toolHint = claimCheck.matchedToolHint ? ` (expected tool: ${claimCheck.matchedToolHint})` : "";
             deps.debugLog("[Chief flow] runAgentLoop hallucination guard triggered — model claimed action with 0 successful tool calls" + toolHint + " (iteration " + (index + 1) + ", session count: " + getSessionClaimedActionCount() + "), retrying.");
 
-            // Mitigation 3: If this is gemini on mini tier and we've seen this pattern,
-            // throw an escalation error so the failover handler can restart at power tier.
-            // Only escalate on the first fire per loop — a second fire means even the retry failed.
-            if (provider === "gemini" && effectiveTier === "mini" && getSessionClaimedActionCount() >= 2) {
-              deps.debugLog("[Chief flow] Claimed-action escalation: gemini mini-tier repeated failure (session count: " + getSessionClaimedActionCount() + "), escalating to power tier.");
+            // Mitigation 3: If this is a mini-tier provider and we've seen this
+            // pattern, throw an escalation error so the failover handler can
+            // restart at power tier. Only escalate on the first fire per loop —
+            // a second fire means even the retry failed.
+            //
+            // The `claimed-action-escalation-all-providers` advanced setting
+            // (default ON) widens the legacy Gemini-only gate to any mini-tier
+            // provider. OFF restores the Gemini-only behaviour.
+            const allProvidersEscalation = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.claimedActionEscalationAllProviders, true);
+            if (shouldEscalateClaimedAction({ provider, effectiveTier, sessionCount: getSessionClaimedActionCount(), allProviders: allProvidersEscalation })) {
+              const scope = allProvidersEscalation === false ? "gemini mini-tier" : "mini-tier";
+              deps.debugLog("[Chief flow] Claimed-action escalation: " + scope + " repeated failure (session count: " + getSessionClaimedActionCount() + "), escalating to power tier.");
               throw new ClaimedActionEscalationError(
-                "Gemini mini-tier repeated claimed-action-without-tool-call failure",
+                "Mini-tier repeated claimed-action-without-tool-call failure",
                 { provider, model, tier: effectiveTier, sessionClaimedActionCount: getSessionClaimedActionCount(), matchedToolHint: claimCheck.matchedToolHint }
               );
             }
@@ -1272,8 +1301,15 @@ export async function runAgentLoop(userMessage, options = {}) {
       // executing an approved multi-step plan — the plan may have further steps
       // and terminating after the first write would leave it half-done. Gated on
       // the "post-write-short-circuit" advanced setting (default ON).
+      //
+      // The "skill-continue-after-write" advanced setting (default ON): when a
+      // skill is active (gathering guard or active skill name), the skill may
+      // take another turn even if the one-write switch is ON. Casual chat is
+      // unchanged. OFF makes skills obey the one-write switch.
       const settingOn = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true);
-      if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES })) {
+      const skillActive = Boolean(gatheringGuard) || Boolean(activeSkillName);
+      const skillContinueAfterWrite = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.skillContinueAfterWrite, true);
+      if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES, skillActive, skillContinueAfterWrite })) {
         const finalText = shortCircuitMessage(lastToolResult.toolCall, lastToolResult.result);
         deps.debugLog("[Chief flow] runAgentLoop short-circuit: write tool succeeded, skipping final LLM call.");
         trace.finishedAt = Date.now();

@@ -38,6 +38,24 @@ export function normaliseSwitchValue(evt, fallback) {
   return fallback;
 }
 
+/**
+ * Clamp the skill max iterations setting to 8–40 with a fallback of 16.
+ * Pure helper — no deps, safe to import directly from tests.
+ *   - undefined / null / "" / NaN / non-numeric → 16
+ *   - below 8 → 8, above 40 → 40
+ *   - integers and numeric strings in range pass through (floor if float)
+ */
+export function clampSkillMaxIterations(raw) {
+  const fallback = 16;
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  const num = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(num)) return fallback;
+  const floored = Math.floor(num);
+  if (floored < 8) return 8;
+  if (floored > 40) return 40;
+  return floored;
+}
+
 export function rebuildSettingsPanel(extensionAPI) {
   setTimeout(() => {
     extensionAPI.settings.panel.create(buildSettingsConfig(extensionAPI));
@@ -872,6 +890,34 @@ export function buildSettingsConfig(extensionAPI) {
         action: {
           type: "switch",
           value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.skillContinueAfterWrite,
+        name: "Continue after a write during a skill run",
+        description: "ON: a skill run may take another turn after one successful write, even if End run after a single successful write is ON. OFF: skills obey that switch. Casual chat is unchanged.",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.skillContinueAfterWrite, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.claimedActionEscalationAllProviders,
+        name: "Escalate on claimed action with no tool call (all providers)",
+        description: "ON means any mini-tier provider that repeatedly claims an action with no successful tool call escalates to power. OFF keeps the old Gemini-only trigger. Default ON.",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.claimedActionEscalationAllProviders, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.skillMaxIterations,
+        name: "Skill max iterations",
+        description: "Caps agent-loop iterations when a skill or gathering guard is active. Weaker models that burn one iteration per tool call can raise this. 8–40, default 16.",
+        action: {
+          type: "input",
+          value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.skillMaxIterations, "16"),
+          placeholder: "16"
         }
       },
       {
