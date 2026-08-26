@@ -106,6 +106,9 @@ Open **Settings > Chief of Staff** and fill in:
 - **Dry Run** — one-shot toggle that simulates the next mutating tool call without writing anything (auto-disables after one use)
 - **Ludicrous mode failover** — allow escalation to the most expensive models (Opus 5 / GPT-5.6 Sol) when all power-tier providers fail
 - **End run after a single successful write** (Advanced, default on) — a lone successful write ends the run with a confirmation. Turn it off if a skill needs several writes in one go (for example a create-then-update workflow, a batch edit, or a follow-up TODO plus slot). `/plan` then go still runs the full plan either way.
+- **Continue after a write during a skill run** (Advanced, default on) — when a skill is active, the run may take another turn after one write even if the switch above is on. Casual chat is unchanged.
+- **Escalate on claimed action with no tool call (all providers)** (Advanced, default on) — any mini-tier provider that repeatedly claims it did something without a successful tool call is bumped to power. Off keeps the old Gemini-only trigger.
+- **Skill max iterations** (Advanced, default 16) — cap on agent-loop iterations when a skill or gathering guard is active. Raise it for weaker models that spend one iteration per tool. Allowed range 8–40.
 - **Hide COS Pages from Linked References** — automatically filters Chief of Staff namespace pages out of linked references on all non-COS pages. Enabled by default.
 - **Use Linked Dates in CoS Logs** — when enabled, internal CoS log entries (audit log, usage stats, eval scores, corrections, graph hygiene, skill-optimize) prefix each line with a `[[Linked Date]]`. Disable to write plain dates instead — keeps Daily Notes pages from accumulating linked references on mobile. Enabled by default.
 - **Staleness Warning Threshold (days)** — how long a skill or scheduled job can go without being reviewed before it's flagged. A startup toast (debounced to once per 24 hours) lists stale items, and `staleness report` returns the same list on demand. Default `30`. Set to `0` to disable the warnings entirely (the report still works).
@@ -118,9 +121,17 @@ Default models by tier:
 | Power (`/power`) | claude-sonnet-5 | gpt-5.6-terra | gemini-3.6-flash | mistral-medium-latest | llama-3.3-70b-versatile | grok-4.6 | kimi-k2.7-code | gpt-5.6-terra |
 | Ludicrous (`/ludicrous`) | claude-opus-5 | gpt-5.6-sol | gemini-3.1-pro-preview-customtools | mistral-medium-latest | llama-3.3-70b-versatile | grok-4.6 | kimi-k3 | gpt-5.6-sol |
 
+| Tier | Kimi Code (`/kimi-code`) | DeepSeek | Ollama (Cloud default; overridable) |
+|---|---|---|---|
+| Mini | kimi-for-coding | deepseek-chat | deepseek-v4-flash |
+| Power | kimi-for-coding | deepseek-reasoner | deepseek-v4-pro |
+| Ludicrous | kimi-for-coding-highspeed | deepseek-reasoner | glm-5.2 |
+
+`/kimi` is Moonshot (`api.moonshot.ai`). `/kimi-code` is Kimi Code (`api.kimi.com/coding/v1`). A `sk-kimi…` key pasted into the Moonshot field is reused for Kimi Code and ignored for Moonshot. Ollama Cloud uses `https://ollama.com/v1`; a local server uses `http://127.0.0.1:11434/v1` and needs no key.
+
 #### Custom OpenAI-compatible providers (LM Studio, Ollama, OpenRouter, vLLM, …)
 
-In addition to the seven built-in providers above, you can configure up to three custom slots pointing at any OpenAI-compatible `/v1/chat/completions` endpoint — local servers like LM Studio or Ollama, or remote services like OpenRouter, Together AI, or self-hosted vLLM. Settings live under **Show Integration Settings → Custom LLM Providers**.
+In addition to the built-in providers above, you can configure up to three custom slots pointing at any OpenAI-compatible `/v1/chat/completions` endpoint — local servers like LM Studio or a second Ollama, or remote services like OpenRouter, Together AI, or self-hosted vLLM. Settings live under **Show Integration Settings → Custom LLM Providers**. First-class Ollama (Cloud or local) is a built-in; custom slots are for extra endpoints.
 
 **Per-slot fields:**
 
@@ -439,7 +450,7 @@ The floating chat panel (bottom-right corner by default) provides a persistent c
 - `/help` shows a context-aware capability summary, including the full command list.
 - `/doctor` runs a health check across API keys, MCP servers, memory, skills, cron jobs, Composio, and Extension Tools — results displayed inline.
 - `/lesson` reviews the conversation and records lessons learned to `[[Chief of Staff/Lessons Learned]]`. Add a topic to focus the reflection (e.g. `/lesson error handling`).
-- Suffix a message with `/power` or `/ludicrous` to use a more capable model for that request. Use `/claude`, `/gemini`, `/openai`, `/mistral`, `/groq`, `/grok`, or `/kimi` to force a specific provider.
+- Suffix a message with `/power` or `/ludicrous` to use a more capable model for that request. Use `/claude`, `/gemini`, `/openai`, `/mistral`, `/groq`, `/grok`, `/kimi`, `/kimi-code`, `/deepseek`, or `/ollama` to force a specific provider.
 - A **cost indicator** in the header shows cumulative API spend. Hover for a detailed breakdown: session cost with input/output token counts, today's cost with per-model splits (e.g. `3-flash $2.06`), and rolling 7-day and 30-day totals. Cost history is persisted across sessions. Use **Chief of Staff: Reset Token Usage Stats** to zero the session counters.
 - Each assistant response has a small pin icon at its bottom right. Click it to append the response to your daily note page.
 - **[[Page references]]** and **((block references))** in responses are clickable — click to navigate, Shift-click to open in the sidebar.
