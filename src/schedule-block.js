@@ -17,6 +17,8 @@ const SLOT_LINE_RE = /^\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s*(?:\(\*\*(\d+)
 const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
+// Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
+export const COS_SCHEDULE_BLOCK_BUILD = "20260826-pages";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
 
@@ -211,6 +213,7 @@ function buildEventString(start, end, title) {
 }
 
 export function buildScheduleBlockTool(deps) {
+  if (typeof window !== "undefined") window.__cosScheduleBlockBuild = COS_SCHEDULE_BLOCK_BUILD;
   async function resolveDailyPage(dateArg) {
     const raw = String(dateArg || "").trim();
     if (!raw) return deps.ensureDailyPageUid(new Date());
