@@ -18,9 +18,16 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260826-pages";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260826-pins";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
+const ENTITY_PULL_PATTERN = "[:block/uid :node/title]";
+const DEFAULT_SANDBOX_PAGE = "COS Daily Plan Sandbox";
+
+/** True when the user message carries the [sandbox] pin (case-insensitive). */
+export function isSandboxUserMessage(text) {
+  return /\[sandbox\]/i.test(String(text || ""));
+}
 
 // ── Pure time helpers ────────────────────────────────────────────────────────
 
@@ -148,6 +155,21 @@ async function getChildBlocks(deps, uid) {
     }))
     .sort((a, b) => a.order - b.order);
 }
+/** Pull a minimal entity shape; pages expose :node/title. Null when absent. */
+async function pullEntity(deps, uid) {
+  const api = deps.getRoamAlphaApi();
+  try {
+    if (typeof api?.data?.pull === "function") return await api.data.pull(ENTITY_PULL_PATTERN, [":block/uid", uid]);
+    if (typeof api?.pull === "function") return await api.pull(ENTITY_PULL_PATTERN, [":block/uid", uid]);
+  } catch (err) {
+    deps.debugLog?.("[cos_schedule_block] entity pull failed for", uid, err?.message);
+  }
+  return null;
+}
+
+function isPageEntity(entity) {
+  return Boolean(entity && entity[":node/title"] != null);
+}
 
 /**
  * Find the schedule parent among a daily page's top-level children, creating
@@ -204,6 +226,24 @@ export async function findExistingOpenTodo(deps, title) {
   }
   return null;
 }
+/**
+ * Resolve a configured schedule parent (setting value or explicit uid):
+ * an existing block uid is used as-is; a page uid or a page title resolves
+ * through findScheduleParent so slots land under its Nautilus/Schedule
+ * heading, never as raw page children. Returns null for empty input.
+ */
+export async function resolveConfiguredScheduleParent(deps, raw, heading) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const entity = await pullEntity(deps, value);
+  if (entity) {
+    if (isPageEntity(entity)) return findScheduleParent(deps, value, heading);
+    return { uid: value, created: false };
+  }
+  const pageUid = await deps.ensurePageUidByTitle(value);
+  if (!pageUid) throw new Error(`Could not resolve schedule parent page "${value}".`);
+  return findScheduleParent(deps, pageUid, heading);
+}
 
 // ── The tool ─────────────────────────────────────────────────────────────────
 
@@ -259,18 +299,38 @@ export function buildScheduleBlockTool(deps) {
       const prefix = formatSlotPrefix(startNorm, endNorm);
       const api = deps.getRoamAlphaApi();
 
-      // 1. Resolve the schedule parent.
-      let parentUid = String(args.parent_uid || "").trim();
+      // 1. Resolve the schedule parent. Order: [sandbox] user-text pin
+      //    (executor-side, ignores model-supplied date/parent_uid) → explicit
+      //    parent_uid → schedule-parent setting → daily page discovery.
+      let parentUid = "";
       let createdParent = false;
       let dailyPage = null;
-      if (parentUid) {
-        deps.requireRoamUidExists(parentUid, "parent_uid");
-      } else {
-        dailyPage = await resolveDailyPage(args.date);
-        if (!dailyPage?.pageUid) throw new Error("Could not resolve the daily page.");
-        const parent = await findScheduleParent(deps, dailyPage.pageUid, args.schedule_heading);
+      if (isSandboxUserMessage(deps.getAgentUserMessage?.())) {
+        const sandboxTitle = deps.getSettingString?.("schedule-sandbox-page", DEFAULT_SANDBOX_PAGE) || DEFAULT_SANDBOX_PAGE;
+        const pageUid = await deps.ensurePageUidByTitle(sandboxTitle);
+        dailyPage = { pageUid, pageTitle: sandboxTitle };
+        const parent = await findScheduleParent(deps, pageUid, args.schedule_heading);
         parentUid = parent.uid;
         createdParent = parent.created;
+      } else if (String(args.parent_uid || "").trim()) {
+        const explicit = String(args.parent_uid).trim();
+        deps.requireRoamUidExists(explicit, "parent_uid");
+        const parent = await resolveConfiguredScheduleParent(deps, explicit, args.schedule_heading);
+        parentUid = parent.uid;
+        createdParent = parent.created;
+      } else {
+        const configured = String(deps.getSettingString?.("schedule-parent", "") || "").trim();
+        if (configured) {
+          const parent = await resolveConfiguredScheduleParent(deps, configured, args.schedule_heading);
+          parentUid = parent.uid;
+          createdParent = parent.created;
+        } else {
+          dailyPage = await resolveDailyPage(args.date);
+          if (!dailyPage?.pageUid) throw new Error("Could not resolve the daily page.");
+          const parent = await findScheduleParent(deps, dailyPage.pageUid, args.schedule_heading);
+          parentUid = parent.uid;
+          createdParent = parent.created;
+        }
       }
 
       // 2. Resolve the task uid WITHOUT creating anything yet — a collision

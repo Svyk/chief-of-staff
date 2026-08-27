@@ -451,7 +451,8 @@ function extractTargetPageUids(toolName, args) {
 
 // ── Main tool execution dispatcher ──────────────────────────────────────────
 
-export async function executeToolCall(toolName, args, { readOnly = false, skipApproval = false } = {}) {
+export async function executeToolCall(toolName, args, { readOnly = false, skipApproval = false, userMessage = null } = {}) {
+  if (typeof userMessage === "string") deps.setAgentUserMessage?.(userMessage);
   // Tool name normalisation: LLMs (especially gemini flash-lite) sometimes hallucinate
   // hyphens in tool names (e.g. "cos_get-current-time" instead of "cos_get_current_time").
   // Try the original name first — MCP tools use hyphens natively (e.g. "list-events").
@@ -586,7 +587,7 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
       const wrappedArgs = {
         tools: [{ tool_slug: upperToolName, arguments: effectiveArgs }]
       };
-      return executeToolCall("COMPOSIO_MULTI_EXECUTE_TOOL", wrappedArgs, { readOnly, skipApproval });
+      return executeToolCall("COMPOSIO_MULTI_EXECUTE_TOOL", wrappedArgs, { readOnly, skipApproval, userMessage });
     }
   }
 
@@ -722,17 +723,17 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
     const upperInner = innerName.toUpperCase();
     if (upperInner === "COMPOSIO_MULTI_EXECUTE_TOOL") {
       deps.debugLog(`[Chief flow] LOCAL_MCP_EXECUTE → Composio redirect: unwrapping ${innerName}`);
-      return executeToolCall("COMPOSIO_MULTI_EXECUTE_TOOL", effectiveArgs.arguments || {}, { readOnly, skipApproval });
+      return executeToolCall("COMPOSIO_MULTI_EXECUTE_TOOL", effectiveArgs.arguments || {}, { readOnly, skipApproval, userMessage });
     }
     // Normalise: collapse double underscores (LLMs invent "openweathermap__weather" for "WEATHERMAP_WEATHER")
     const normInner = upperInner.replace(/__+/g, "_");
     if (deps.getToolSchema(normInner)) {
       deps.debugLog(`[Chief flow] LOCAL_MCP_EXECUTE → Composio slug redirect: "${innerName}" → "${normInner}"`);
-      return executeToolCall(normInner, effectiveArgs.arguments || {}, { readOnly, skipApproval });
+      return executeToolCall(normInner, effectiveArgs.arguments || {}, { readOnly, skipApproval, userMessage });
     }
     if (normInner !== upperInner && deps.getToolSchema(upperInner)) {
       deps.debugLog(`[Chief flow] LOCAL_MCP_EXECUTE → Composio slug redirect: ${innerName}`);
-      return executeToolCall(upperInner, effectiveArgs.arguments || {}, { readOnly, skipApproval });
+      return executeToolCall(upperInner, effectiveArgs.arguments || {}, { readOnly, skipApproval, userMessage });
     }
     const cache = deps.getLocalMcpToolsCache() || [];
     // Exact match first, then try stripping server-name prefix (LLMs sometimes send "server.tool_name")
@@ -763,7 +764,7 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
           const suffixMatches = suffix ? allSlugs.filter(s => s.endsWith("_" + suffix)) : [];
           if (suffixMatches.length === 1) {
             deps.debugLog(`[Chief flow] LOCAL_MCP_EXECUTE → Composio fuzzy (suffix "${suffix}"): "${innerName}" → "${suffixMatches[0]}"`);
-            return executeToolCall(suffixMatches[0], effectiveArgs.arguments || {}, { readOnly, skipApproval });
+            return executeToolCall(suffixMatches[0], effectiveArgs.arguments || {}, { readOnly, skipApproval, userMessage });
           }
           // Prefix match: e.g. "GMAIL" from "GMAIL_LIST_MESSAGES" → suggest actual GMAIL_* tools
           const prefixMatches = allSlugs.filter(s => s.startsWith(prefix + "_"));

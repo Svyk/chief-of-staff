@@ -407,7 +407,9 @@ const SETTINGS_KEYS = {
   claimedActionEscalationAllProviders: "claimed-action-escalation-all-providers",
   skillMaxIterations: "skill-max-iterations",
   skillContinueAfterWrite: "skill-continue-after-write",
-  autoApproveMode: "auto-approve-mode"
+  autoApproveMode: "auto-approve-mode",
+  scheduleParent: "schedule-parent",
+  scheduleSandboxPage: "schedule-sandbox-page"
 };
 const TOOLS_SCHEMA_VERSION = 3;
 const AUTH_POLL_INTERVAL_MS = 9000;
@@ -647,6 +649,9 @@ let askChiefInFlight = false; // Concurrency guard for askChiefOfStaff
 let activeCouncilQuestion = null; // Concurrency guard for cos_llm_council
 const authPollStateBySlug = new Map();
 let extensionAPIRef = null;
+// The current user message, set at the start of each agent run so tools
+// (cos_schedule_block's [sandbox] pin) can inspect user text executor-side.
+let agentUserMessage = "";
 // lastAgentRunTrace — moved to agent-loop.js
 // providerCooldowns — moved to llm-providers.js
 // conversationTurns, conversationPersistTimeoutId, lastKnownPageContext,
@@ -6816,6 +6821,8 @@ function onload({ extensionAPI }) {
     withRoamWriteRetry,
     ensurePageUidByTitle,
     ensureDailyPageUid,
+    getAgentUserMessage: () => agentUserMessage,
+    getSettingString: (key, fallback) => getSettingString(extensionAPIRef, key, fallback),
     resolveWriteParentUid,
     getPageTreeByUidAsync,
     getPageTreeByTitleAsync,
@@ -6988,6 +6995,7 @@ function onload({ extensionAPI }) {
   initToolExecution({
     debugLog,
     getExtensionAPI: () => extensionAPIRef,
+    setAgentUserMessage: (m) => { agentUserMessage = String(m || ""); },
     isDryRunEnabled,
     consumeDryRunMode,
     getSessionUsedLocalMcp,
@@ -7128,6 +7136,7 @@ function onload({ extensionAPI }) {
   initAgentLoop({
     debugLog,
     getExtensionAPIRef: () => extensionAPIRef,
+    setAgentUserMessage: (m) => { agentUserMessage = String(m || ""); },
     getExternalExtensionTools,
     getExtensionToolsRegistry,
     getExtToolsConfig,

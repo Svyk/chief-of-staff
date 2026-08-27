@@ -270,6 +270,27 @@ export function shortCircuitMessage(toolCall, result) {
   }
   return `Written successfully.`;
 }
+/**
+ * A cos_schedule_block collision is terminal in casual chat: the tool
+ * returned `colliding_string`, and the user must see it verbatim — giving
+ * the model another turn invites a paraphrase of the overlapping slot.
+ * Skill runs with skill-continue-after-write ON are exempt (the skill
+ * handles the refusal itself).
+ */
+export function shouldShortCircuitAfterCollision({ toolResults, skillActive, skillContinueAfterWrite }) {
+  if (skillContinueAfterWrite !== false && skillActive) return false;
+  if (!Array.isArray(toolResults) || !toolResults.length) return false;
+  const last = toolResults[toolResults.length - 1];
+  const name = last?.toolCall?.name;
+  const inner = last?.toolCall?.arguments?.tool_name;
+  const isSchedule = name === "cos_schedule_block" || (name === "ROAM_EXECUTE" && inner === "cos_schedule_block");
+  const colliding = last?.result?.colliding_string;
+  return Boolean(isSchedule && colliding);
+}
+
+export function collisionShortCircuitMessage(result) {
+  return `Time collision: ${result?.colliding_string ?? ""}`;
+}
 
 // ── Core agent loop ─────────────────────────────────────────────────────────
 
@@ -284,6 +305,7 @@ export async function runAgentLoop(userMessage, options = {}) {
   // tool-execution.js). Failover retries re-enter runAgentLoop and so
   // also start a fresh budget — each provider attempt is its own run.
   resetAutoApproveCount();
+  deps.setAgentUserMessage?.(userMessage);
   const {
     maxIterations: initialMaxIterations = deps.MAX_AGENT_ITERATIONS,
     systemPrompt = null,
@@ -1121,7 +1143,7 @@ export async function runAgentLoop(userMessage, options = {}) {
 
         if (!cacheHit) {
           try {
-            result = await executeToolCall(toolCall.name, toolArgs, { readOnly: readOnlyTools, skipApproval });
+            result = await executeToolCall(toolCall.name, toolArgs, { readOnly: readOnlyTools, skipApproval, userMessage });
             const discoveredSessionId = extractComposioSessionIdFromToolResult(result);
             if (discoveredSessionId) composioSessionId = discoveredSessionId;
           } catch (error) {
@@ -1131,7 +1153,7 @@ export async function runAgentLoop(userMessage, options = {}) {
             if (isComposioTool && isValidationError && composioSessionId) {
               try {
                 const retryArgs = withComposioSessionArgs(toolCall.name, toolArgs, composioSessionId);
-                result = await executeToolCall(toolCall.name, retryArgs, { readOnly: readOnlyTools, skipApproval });
+                result = await executeToolCall(toolCall.name, retryArgs, { readOnly: readOnlyTools, skipApproval, userMessage });
                 errorMessage = "";
                 const discoveredSessionId = extractComposioSessionIdFromToolResult(result);
                 if (discoveredSessionId) composioSessionId = discoveredSessionId;
@@ -1313,6 +1335,16 @@ export async function runAgentLoop(userMessage, options = {}) {
       const settingOn = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true);
       const skillActive = Boolean(gatheringGuard) || Boolean(activeSkillName);
       const skillContinueAfterWrite = deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.skillContinueAfterWrite, true);
+      // A schedule collision is terminal even though result.error is set:
+      // echo colliding_string verbatim instead of letting the model paraphrase.
+      if (shouldShortCircuitAfterCollision({ toolResults, skillActive, skillContinueAfterWrite })) {
+        const finalText = collisionShortCircuitMessage(lastToolResult.result);
+        deps.debugLog("[Chief flow] runAgentLoop short-circuit: schedule collision, echoing colliding_string verbatim.");
+        trace.finishedAt = Date.now();
+        trace.resultTextPreview = finalText;
+        deps.updateChatPanelCostIndicator();
+        return { text: finalText, messages, mcpResultTexts };
+      }
       if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES, skillActive, skillContinueAfterWrite })) {
         const finalText = shortCircuitMessage(lastToolResult.toolCall, lastToolResult.result);
         deps.debugLog("[Chief flow] runAgentLoop short-circuit: write tool succeeded, skipping final LLM call.");
