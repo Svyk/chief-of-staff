@@ -5,6 +5,7 @@
 // provider tool-count limits (e.g. OpenAI's 128-tool cap).
 
 import { extractAuditableSkillLines, summariseSkillTokens } from "./parse-utils.js";
+import { buildScheduleBlockTool } from "./schedule-block.js";
 
 let deps = {};
 let roamNativeToolsCache = null;
@@ -20,7 +21,9 @@ export const ROAM_CORE_TOOLS = new Set([
   // strips ROAM_ROUTE/ROAM_EXECUTE, so a routed tool named in a whitelist is
   // unreachable — the agent loop's `startsWith("cos_")` bypass only admits
   // tools already in the array, it cannot add a routed one to it.
-  "cos_get_skill", "cos_count_skill_tokens", "cos_write_draft_skill"
+  "cos_get_skill", "cos_count_skill_tokens", "cos_write_draft_skill",
+  // Deterministic TimeBlock slot writer — skills declare it, so it must be direct.
+  "cos_schedule_block"
 ]);
 
 const ROAM_TOOL_CATEGORIES = {
@@ -1399,6 +1402,7 @@ export function getRoamNativeTools() {
         };
       }
     },
+    buildScheduleBlockTool(deps),
     {
       name: "cos_get_current_time",
       isMutating: false,

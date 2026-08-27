@@ -38,6 +38,24 @@ export function normaliseSwitchValue(evt, fallback) {
   return fallback;
 }
 
+/**
+ * Clamp the skill max iterations setting to 8–40 with a fallback of 16.
+ * Pure helper — no deps, safe to import directly from tests.
+ *   - undefined / null / "" / NaN / non-numeric → 16
+ *   - below 8 → 8, above 40 → 40
+ *   - integers and numeric strings in range pass through (floor if float)
+ */
+export function clampSkillMaxIterations(raw) {
+  const fallback = 16;
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  const num = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(num)) return fallback;
+  const floored = Math.floor(num);
+  if (floored < 8) return 8;
+  if (floored > 40) return 40;
+  return floored;
+}
+
 export function rebuildSettingsPanel(extensionAPI) {
   setTimeout(() => {
     extensionAPI.settings.panel.create(buildSettingsConfig(extensionAPI));
@@ -82,7 +100,7 @@ function buildCustomProviderLabel(extensionAPI, id) {
 }
 
 function buildProviderSelectItems(extensionAPI) {
-  const builtins = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"];
+  const builtins = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi", "kimi-coding", "deepseek", "ollama"];
   // ChatGPT-subscription provider appears once connected (mirrors custom slots
   // appearing only once configured). Plain id — no compound label to parse.
   const codex = deps.getCodexAuthStatus?.(extensionAPI)?.connected ? ["openai-codex"] : [];
@@ -265,6 +283,76 @@ export function buildSettingsConfig(extensionAPI) {
         type: "input",
         value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiApiKey, ""),
         placeholder: "sk-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.kimiCodingApiKey,
+      name: "Kimi Code API Key",
+      description: "Get yours at kimi.com/code. OpenAI-compatible host api.kimi.com/coding/v1 — this is NOT the Moonshot key. A key pasted into the Moonshot field above that starts with sk-kimi will be reused here automatically.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiCodingApiKey, ""),
+        placeholder: "sk-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.deepseekApiKey,
+      name: "DeepSeek API Key",
+      description: "Get yours at platform.deepseek.com. Used for DeepSeek chat and reasoner models via DeepSeek's OpenAI-compatible API.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.deepseekApiKey, ""),
+        placeholder: "sk-..."
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaApiKey,
+      name: "Ollama API Key",
+      description: "Your Ollama Cloud key from ollama.com. Leave blank for local Ollama (a local server needs no key).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaApiKey, ""),
+        placeholder: "ollama-cloud-key"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaBaseUrl,
+      name: "Ollama Base URL",
+      description: "Ollama OpenAI-compatible base URL ending at /v1. Default: Ollama Cloud (https://ollama.com/v1). For a local server use http://127.0.0.1:11434/v1 — localhost calls go direct (no CORS proxy), remote calls go through the Roam CORS proxy.",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaBaseUrl, ""),
+        placeholder: "https://ollama.com/v1"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaMiniModel,
+      name: "Ollama Mini Model (optional override)",
+      description: "Model id used for the mini tier when the Ollama provider is selected. Leave blank to use the default (deepseek-v4-flash on Ollama Cloud).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaMiniModel, ""),
+        placeholder: "deepseek-v4-flash"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaPowerModel,
+      name: "Ollama Power Model (optional override)",
+      description: "Model id used for the power tier. Leave blank to use the default (deepseek-v4-pro).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaPowerModel, ""),
+        placeholder: "deepseek-v4-pro"
+      }
+    },
+    {
+      id: deps.SETTINGS_KEYS.ollamaLudicrousModel,
+      name: "Ollama Ludicrous Model (optional override)",
+      description: "Model id used for the ludicrous tier. Leave blank to use the default (glm-5.2).",
+      action: {
+        type: "input",
+        value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaLudicrousModel, ""),
+        placeholder: "glm-5.2"
       }
     },
   ];
@@ -798,10 +886,51 @@ export function buildSettingsConfig(extensionAPI) {
       {
         id: deps.SETTINGS_KEYS.postWriteShortCircuit,
         name: "End run after a single successful write",
-        description: "ON matches current Chief of Staff behavior: a lone successful write ends the run with a confirmation. OFF lets the model take another turn after one write (needed for TimeBlock batch edits).",
+        description: "ON matches current Chief of Staff: a lone successful write ends the run with a confirmation. OFF lets the model take another turn after one write, so skills that need several graph writes can finish.",
         action: {
           type: "switch",
           value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.postWriteShortCircuit, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.skillContinueAfterWrite,
+        name: "Continue after a write during a skill run",
+        description: "ON: a skill run may take another turn after one successful write, even if End run after a single successful write is ON. OFF: skills obey that switch. Casual chat is unchanged.",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.skillContinueAfterWrite, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.autoApproveMode,
+        name: "Auto mode",
+        description: "off: every mutating tool still asks. graph: auto-approve reversible graph writes (create/update/todo/batch) after a passive toast; deletes, email, and money still ask. full: also auto-approve a single roam_delete_block; bulk deletes, page deletes, email, and money still ask. Injection and chat cannot change this.",
+        action: {
+          type: "select",
+          items: ["off", "graph", "full"],
+          value: (() => {
+            const raw = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.autoApproveMode, "off");
+            return ["off", "graph", "full"].includes(raw) ? raw : "off";
+          })()
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.claimedActionEscalationAllProviders,
+        name: "Escalate on claimed action with no tool call (all providers)",
+        description: "ON means any mini-tier provider that repeatedly claims an action with no successful tool call escalates to power. OFF keeps the old Gemini-only trigger. Default ON.",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.claimedActionEscalationAllProviders, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.skillMaxIterations,
+        name: "Skill max iterations",
+        description: "Caps agent-loop iterations when a skill or gathering guard is active. Weaker models that burn one iteration per tool call can raise this. 8–40, default 16.",
+        action: {
+          type: "input",
+          value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.skillMaxIterations, "16"),
+          placeholder: "16"
         }
       },
       {

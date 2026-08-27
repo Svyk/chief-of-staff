@@ -36,7 +36,7 @@ const providerCooldowns = {}; // { provider: expiryTimestampMs } — bounded at 
 // Built-in providers — fixed at compile time. Custom providers
 // (LM Studio, Ollama, OpenAI-compatible servers) are configured at runtime
 // via custom-llm-${n}-* settings; see listCustomProviderIds below.
-export const BUILTIN_LLM_PROVIDERS = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi"];
+export const BUILTIN_LLM_PROVIDERS = ["anthropic", "openai", "gemini", "mistral", "groq", "grok", "kimi", "kimi-coding", "deepseek", "ollama"];
 
 // Kept for back-compat: index.js uses this for the autoresearch judge,
 // which intentionally selects from built-in providers only.
@@ -122,7 +122,18 @@ export function getValidProviders(extensionAPI) {
 // Resolves the OpenAI-format chat completions endpoint for a given provider.
 // Custom providers honour the per-slot base URL and useProxy flag; built-ins
 // use the fixed LLM_API_ENDPOINTS table behind the Roam CORS proxy.
+// Ollama is the exception: it honours a runtime `ollama-base-url` setting
+// (default Ollama Cloud). Localhost bases go direct (browser secure-context
+// exception for loopback); cloud bases go through the proxy like other
+// remote built-ins.
 export function resolveOpenAIEndpoint(provider) {
+  if (provider === "ollama") {
+    const base = deps.getSettingString(deps.extensionAPIRef, deps.SETTINGS_KEYS.ollamaBaseUrl, "")
+      .trim() || LLM_API_ENDPOINTS.ollama.replace(/\/chat\/completions$/, "");
+    const direct = `${base.replace(/\/+$/, "")}/chat/completions`;
+    if (isLocalhostUrl(base)) return direct;
+    return deps.getProxiedLlmUrl(direct);
+  }
   if (isCustomProvider(provider)) {
     const cfg = getCustomProviderConfig(deps.extensionAPIRef, provider);
     if (!cfg) throw new Error(`Custom LLM provider ${provider} is not configured`);
@@ -150,6 +161,7 @@ export function buildEffectiveFailoverChain(extensionAPI, tier) {
 export function isOpenAICompatible(provider) {
   return provider === "openai" || provider === "gemini" || provider === "mistral" || provider === "groq"
     || provider === "grok" || provider === "kimi"
+    || provider === "kimi-coding" || provider === "deepseek" || provider === "ollama"
     || isCodexProvider(provider) || isCustomProvider(provider);
 }
 
@@ -208,12 +220,33 @@ export function getApiKeyForProvider(extensionAPI, provider) {
     mistral: deps.SETTINGS_KEYS.mistralApiKey,
     groq: deps.SETTINGS_KEYS.groqApiKey,
     grok: deps.SETTINGS_KEYS.grokApiKey,
-    kimi: deps.SETTINGS_KEYS.kimiApiKey
+    kimi: deps.SETTINGS_KEYS.kimiApiKey,
+    "kimi-coding": deps.SETTINGS_KEYS.kimiCodingApiKey,
+    deepseek: deps.SETTINGS_KEYS.deepseekApiKey,
+    ollama: deps.SETTINGS_KEYS.ollamaApiKey
   };
   const settingKey = keyMap[provider];
   if (settingKey) {
     const providerKey = deps.getSettingString(extensionAPI, settingKey, "");
+    // Moonshot kimi: a sk-kimi key is not valid on api.moonshot.ai — return
+    // empty so /kimi asks for a real Moonshot key instead of 401. This check
+    // runs BEFORE the dedicated-key truthy return so the skip always wins.
+    if (provider === "kimi" && providerKey.startsWith("sk-kimi")) return "";
     if (providerKey) return sanitizeHeaderValue(providerKey);
+    // Kimi Code key fallback: this machine pasted a sk-kimi… key into the
+    // Moonshot field. Reuse it for kimi-coding when the dedicated key is empty.
+    if (provider === "kimi-coding") {
+      const moonshotKey = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.kimiApiKey, "");
+      if (moonshotKey.startsWith("sk-kimi")) return sanitizeHeaderValue(moonshotKey);
+    }
+    // Ollama: key if set; else localhost → lm-studio-no-auth (OpenAI client
+    // requires a non-empty Bearer value); cloud → "" so the caller treats
+    // the provider as unconfigured.
+    if (provider === "ollama") {
+      const base = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaBaseUrl, "")
+        .trim() || LLM_API_ENDPOINTS.ollama.replace(/\/chat\/completions$/, "");
+      return isLocalhostUrl(base) ? "lm-studio-no-auth" : "";
+    }
   }
   // Fallback: legacy single-key field
   return sanitizeHeaderValue(deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.llmApiKey, ""));
@@ -229,15 +262,20 @@ export function getOpenAiApiKey(extensionAPI) {
   // Fallback: if the legacy key looks like an OpenAI key or provider is openai
   const legacy = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.llmApiKey, "");
   // Moonshot (Kimi) keys also start with sk- — never treat a legacy sk- key
-  // as OpenAI when the selected provider is kimi or grok.
+  // as OpenAI when the selected provider is kimi, kimi-coding, deepseek, or grok.
   const provider = getLlmProvider(extensionAPI);
-  if (legacy && provider !== "kimi" && provider !== "grok" && (legacy.startsWith("sk-") || provider === "openai")) return sanitizeHeaderValue(legacy);
+  const nonOpenAiSkProviders = ["kimi", "kimi-coding", "deepseek", "grok"];
+  if (legacy && !nonOpenAiSkProviders.includes(provider) && (legacy.startsWith("sk-") || provider === "openai")) return sanitizeHeaderValue(legacy);
   return "";
 }
 
 export function getLlmModel(extensionAPI, provider) {
   if (isCustomProvider(provider)) {
     return getCustomProviderConfig(extensionAPI, provider)?.miniModel || "";
+  }
+  if (provider === "ollama") {
+    const override = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaMiniModel, "").trim();
+    if (override) return override;
   }
   return DEFAULT_LLM_MODELS[provider] || DEFAULT_LLM_MODELS.anthropic;
 }
@@ -246,12 +284,20 @@ export function getPowerModel(extensionAPI, provider) {
   if (isCustomProvider(provider)) {
     return getCustomProviderConfig(extensionAPI, provider)?.powerModel || "";
   }
+  if (provider === "ollama") {
+    const override = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaPowerModel, "").trim();
+    if (override) return override;
+  }
   return POWER_LLM_MODELS[provider] || POWER_LLM_MODELS.anthropic;
 }
 
 export function getLudicrousModel(extensionAPI, provider) {
   if (isCustomProvider(provider)) {
     return getCustomProviderConfig(extensionAPI, provider)?.ludicrousModel || null;
+  }
+  if (provider === "ollama") {
+    const override = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.ollamaLudicrousModel, "").trim();
+    if (override) return override;
   }
   return LUDICROUS_LLM_MODELS[provider] || null;
 }

@@ -4,11 +4,31 @@
  *
  * Extracted from index.js. All external dependencies are injected via initToolExecution().
  */
+import { classifyAutoApprove, normaliseAutoApproveMode } from "./security-core.js";
 
 // ── Module-scoped state ──────────────────────────────────────────────────────
 const TOOL_APPROVAL_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const approvedToolsThisSession = new Map(); // approvalKey -> approvedAt timestamp
 const approvedWritePageUids = new Map(); // pageUid -> approvedAt timestamp (scoped page approval for create tools)
+// ── Auto-approve run cap ────────────────────────────────────────────────────
+// Hard cap on auto-mode approvals per agent run. runAgentLoop resets the
+// counter via resetAutoApproveCount(); the (cap + 1)th mutating call prompts
+// regardless of mode. classifyAutoApprove (security-core.js) decides what is
+// eligible; this counter only bounds how much can go through silently.
+export const AUTO_APPROVE_MAX_PER_RUN = 12;
+let autoApproveCount = 0;
+
+export function resetAutoApproveCount() {
+  autoApproveCount = 0;
+}
+
+export function getAutoApproveCount() {
+  return autoApproveCount;
+}
+
+function incrementAutoApproveCount() {
+  autoApproveCount += 1;
+}
 
 // ── Dependencies (injected via init) ────────────────────────────────────────
 let deps = {};
@@ -617,9 +637,27 @@ export async function executeToolCall(toolName, args, { readOnly = false, skipAp
   const approvalKey = buildToolScopeKey(toolName, effectiveArgs);
   const now = Date.now();
   if (isMutating && !skipApproval) {
+    // Auto mode (Advanced settings select: off / graph / full). Compiled
+    // allowlist in security-core.js — tool args (skip_approval, pre_approved)
+    // and model text cannot widen it. Auto-approved calls skip the approval
+    // prompt but are never silent: a passive info toast is shown and a scope
+    // event is recorded. skipApproval stays an internal-only option
+    // (simulation / dry-run callers), never read from args.
+    const autoApproveMode = normaliseAutoApproveMode(
+      typeof deps.getSettingString === "function"
+        ? deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS?.autoApproveMode, "off")
+        : "off"
+    );
+    if (autoApproveMode !== "off"
+      && getAutoApproveCount() < AUTO_APPROVE_MAX_PER_RUN
+      && classifyAutoApprove(toolName, effectiveArgs, autoApproveMode) === "auto") {
+      incrementAutoApproveCount();
+      deps.showInfoToast("Auto mode", `Auto-approved: ${toolName}`);
+      emitScopeEvent(approvalKey, "tool", "auto");
+      deps.debugLog(`[Chief flow] Auto-approved (${autoApproveMode} mode, ${getAutoApproveCount()}/${AUTO_APPROVE_MAX_PER_RUN} this run): ${toolName}`);
     // Scoped page approval for block-creation tools: approve once per page,
     // then subsequent writes to that same page are auto-approved within TTL.
-    if (SCOPED_PAGE_APPROVAL_TOOLS.has(toolName)) {
+    } else if (SCOPED_PAGE_APPROVAL_TOOLS.has(toolName)) {
       const targetPageUids = extractTargetPageUids(toolName, effectiveArgs);
       const unapprovedPages = targetPageUids.filter(uid => !hasPageWriteApproval(uid, now));
       if (unapprovedPages.length > 0) {
