@@ -440,8 +440,9 @@ describe("collisionShortCircuitMessage", () => {
     assert.ok(msg.includes("21:00 - 00:00 (**180'**) ((abc))"));
     assert.equal(
       msg,
-      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap to keep both, move to shift the existing slot, or pick a different time."
+      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap to keep both, or pick a different time."
     );
+    assert.ok(!/\bmove\b/i.test(msg), "collision copy must not mention move");
   });
 });
 
@@ -902,7 +903,7 @@ describe("shortCircuitMessage", () => {
         { name: "cos_schedule_block" },
         { slot_string: "19:00 - 21:00 (**120'**) ((todo1))" }
       ),
-      "Scheduled: 19:00 - 21:00 (**120'**) ((todo1))"
+      "Timed block placed: 19:00 - 21:00 (**120'**) ((todo1))"
     );
   });
 
@@ -912,7 +913,7 @@ describe("shortCircuitMessage", () => {
         { name: "cos_schedule_block" },
         { slot_string: "19:00 - 21:00 (**120'**) ((todo2))", overlapped: true }
       ),
-      "Scheduled alongside an existing block: 19:00 - 21:00 (**120'**) ((todo2))"
+      "Timed block placed alongside an existing one: 19:00 - 21:00 (**120'**) ((todo2))"
     );
   });
 
@@ -922,7 +923,7 @@ describe("shortCircuitMessage", () => {
         { name: "ROAM_EXECUTE", arguments: { tool_name: "cos_schedule_block" } },
         { slot_string: "14:00 - 15:00 (**60'**) ((todo3))" }
       ),
-      "Scheduled: 14:00 - 15:00 (**60'**) ((todo3))"
+      "Timed block placed: 14:00 - 15:00 (**60'**) ((todo3))"
     );
   });
 });

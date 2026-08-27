@@ -274,9 +274,9 @@ export function shortCircuitMessage(toolCall, result) {
   const effectiveName = toolName === "ROAM_EXECUTE" ? innerName : toolName;
   if (effectiveName === "cos_schedule_block" && resultData.slot_string) {
     if (resultData.overlapped) {
-      return `Scheduled alongside an existing block: ${resultData.slot_string}`;
+      return `Timed block placed alongside an existing one: ${resultData.slot_string}`;
     }
-    return `Scheduled: ${resultData.slot_string}`;
+    return `Timed block placed: ${resultData.slot_string}`;
   }
   return `Written successfully.`;
 }
@@ -301,7 +301,7 @@ export function shouldShortCircuitAfterCollision({ toolResults, skillActive, ski
 
 export function collisionShortCircuitMessage(result) {
   const colliding = result?.colliding_string ?? "";
-  return `Time collision: ${colliding}\nThat window is taken. Reply overlap to keep both, move to shift the existing slot, or pick a different time.`;
+  return `Time collision: ${colliding}\nThat window is taken. Reply overlap to keep both, or pick a different time.`;
 }
 
 // ── Core agent loop ─────────────────────────────────────────────────────────
