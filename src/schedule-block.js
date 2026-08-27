@@ -73,6 +73,24 @@ const TITLE_NOISE_RE = /\b(schedule[ds]?|block\s+out|from|to|until|at)\b/gi;
  * ("6-7am" → 06:00/07:00, "9pm to midnight" → 21:00/00:00). Missing keys are
  * omitted; title falls back to "Scheduled block".
  */
+function isBareHourToken(raw) {
+  return /^\d{1,2}$/.test(String(raw || "").trim());
+}
+
+function isDashAdjacentTime(text, index, length) {
+  let i = index - 1;
+  while (i >= 0 && text[i] === " ") i--;
+  if (i >= 0 && text[i] === "-") return true;
+  let j = index + length;
+  while (j < text.length && text[j] === " ") j++;
+  return j < text.length && text[j] === "-";
+}
+
+function isDurationNumber(text, index, length) {
+  const after = text.slice(index + length);
+  return /^\s*-?\s*(?:hours?|hrs?|mins?|minutes?)\b/i.test(after);
+}
+
 export function parseScheduleFieldsFromUserText(text) {
   const raw = String(text || "");
   const tokens = [];
@@ -80,13 +98,20 @@ export function parseScheduleFieldsFromUserText(text) {
   let m;
   while ((m = re.exec(raw)) !== null) tokens.push({ raw: m[0], index: m.index });
 
+  const kept = tokens.filter((t) => {
+    const trimmed = t.raw.trim();
+    if (!isBareHourToken(trimmed)) return true;
+    if (isDurationNumber(raw, t.index, t.raw.length)) return false;
+    return isDashAdjacentTime(raw, t.index, t.raw.length);
+  });
+
   // Meridiem inheritance: "6-7am" gives the bare "6" the "am" from "7am".
   // Colon tokens (already 24-hour) and midnight/noon never inherit.
-  const meridiem = tokens
+  const meridiem = kept
     .map((t) => /(am|pm)\b/i.exec(t.raw))
     .find(Boolean)?.[1]?.toLowerCase() || null;
   const parsed = [];
-  for (const t of tokens) {
+  for (const t of kept) {
     let token = t.raw;
     if (meridiem && !/(am|pm)\b/i.test(token) && !/:/.test(token) && !/^(midnight|noon)$/i.test(token.trim())) {
       token = `${token.trim()}${meridiem}`;
@@ -105,7 +130,7 @@ export function parseScheduleFieldsFromUserText(text) {
   // and the scheduling verbs.
   let title = "";
   let cursor = 0;
-  for (const t of tokens) {
+  for (const t of kept) {
     title += raw.slice(cursor, t.index);
     cursor = t.index + t.raw.length;
   }
@@ -217,7 +242,35 @@ export function findScheduleSlotByTitle(children, anchor, extraTexts) {
 
 // ── Last refused window (follow-up "overlap") ────────────────────────────────
 
+const LAST_SCHEDULE_COLLISION_TTL_MS = 5 * 60 * 1000;
+const OVERLAP_TITLE_NOISE_RE = /\b(?:that'?s\s+ok|ok|yes|please|thanks|same\s+time|at\s+the\s+same\s+time|both\s+at\s+(?:the\s+)?same\s+time|overlapp?(?:ing)?|in\s+parallel|alongside|concurrent(?:ly)?|double[-\s]?book|while|during)\b/gi;
+
 let lastScheduleCollision = null;
+
+function isLastScheduleCollisionFresh(last = lastScheduleCollision) {
+  if (!last || last.at == null) return false;
+  return Date.now() - last.at <= LAST_SCHEDULE_COLLISION_TTL_MS;
+}
+
+function isNoNewScheduleTitle(title) {
+  const t = String(title || "").trim();
+  if (!t || t === "Scheduled block") return true;
+  const stripped = t.replace(OVERLAP_TITLE_NOISE_RE, " ").replace(/\s+/g, " ").trim();
+  return !stripped;
+}
+
+/** Bare "overlap" or overlap confirm with no new clocks, anchor, or title. */
+function isShortOverlapConfirmation(userMessage, args = {}, fromUser = null) {
+  const msg = String(userMessage || "").trim();
+  if (/^overlap\b/i.test(msg)) return true;
+  if (!isOverlapScheduleIntent(msg)) return false;
+  const fields = fromUser || parseScheduleFieldsFromUserText(msg);
+  if (fields.start && fields.end) return false;
+  if (parseOverlapAnchor(msg)) return false;
+  if (String(args.title || "").trim()) return false;
+  if (!isNoNewScheduleTitle(fields.title)) return false;
+  return true;
+}
 
 export function getLastScheduleCollision() {
   return lastScheduleCollision;
@@ -274,13 +327,30 @@ export function isScheduleSlotIntent(text) {
  * unless the message is a schedule-slot intent with both times parseable.
  */
 export function buildForcedScheduleToolCall(userMessage) {
-  if (!isScheduleSlotIntent(userMessage)) return null;
-  const fields = parseScheduleFieldsFromUserText(userMessage);
-  if (!fields.start || !fields.end) return null;
-  return {
-    name: "cos_schedule_block",
-    arguments: { start: fields.start, end: fields.end, title: fields.title || "Scheduled block" }
-  };
+  const raw = String(userMessage || "");
+  if (isScheduleSlotIntent(raw)) {
+    const fields = parseScheduleFieldsFromUserText(raw);
+    if (!fields.start || !fields.end) return null;
+    return {
+      name: "cos_schedule_block",
+      arguments: { start: fields.start, end: fields.end, title: fields.title || "Scheduled block" },
+    };
+  }
+  if (isShortOverlapConfirmation(raw) && isLastScheduleCollisionFresh()) {
+    const last = lastScheduleCollision;
+    if (last?.start && last?.end) {
+      return {
+        name: "cos_schedule_block",
+        arguments: {
+          start: last.start,
+          end: last.end,
+          title: last.title || "Scheduled block",
+          collide: "allow",
+        },
+      };
+    }
+  }
+  return null;
 }
 
 // ── Pure time helpers ────────────────────────────────────────────────────────
@@ -547,7 +617,6 @@ export function buildScheduleBlockTool(deps) {
       const fromUser = parseScheduleFieldsFromUserText(userMessage);
       const collide = resolveCollidePolicy(deps, args, userMessage);
       let title = String(args.title || "").trim();
-      if (!title && lastScheduleCollision?.title) title = lastScheduleCollision.title;
       const kind = String(args.kind || "task") === "event" ? "event" : "task";
       const api = deps.getRoamAlphaApi();
 
@@ -587,6 +656,17 @@ export function buildScheduleBlockTool(deps) {
 
       const children = await getChildBlocks(deps, parentUid);
       const extraTexts = await fetchOpenTodoTexts(deps);
+      const lastFresh = isLastScheduleCollisionFresh() ? lastScheduleCollision : null;
+
+      if (
+        !title
+        && isShortOverlapConfirmation(userMessage, args, fromUser)
+        && lastFresh
+        && lastFresh.parent_uid === parentUid
+        && lastFresh.title
+      ) {
+        title = lastFresh.title;
+      }
 
       // Resolve start/end: user-text clocks win, then named anchor, then last
       // refused window on overlap follow-up, then model args.
@@ -604,14 +684,14 @@ export function buildScheduleBlockTool(deps) {
           startRaw = anchorMatch.slot.start;
           endRaw = anchorMatch.slot.end;
         } else if (
-          isOverlapScheduleIntent(userMessage)
-          && lastScheduleCollision
-          && lastScheduleCollision.parent_uid === parentUid
-          && lastScheduleCollision.start
-          && lastScheduleCollision.end
+          isShortOverlapConfirmation(userMessage, args, fromUser)
+          && lastFresh
+          && lastFresh.parent_uid === parentUid
+          && lastFresh.start
+          && lastFresh.end
         ) {
-          startRaw = lastScheduleCollision.start;
-          endRaw = lastScheduleCollision.end;
+          startRaw = lastFresh.start;
+          endRaw = lastFresh.end;
         } else {
           startRaw = args.start;
           endRaw = args.end;

@@ -6,6 +6,7 @@ import {
   parseOverlapAnchor,
   findScheduleSlotByTitle,
   clearLastScheduleCollision,
+  getLastScheduleCollision,
   parseSlotLine,
 } from "../src/schedule-block.js";
 
@@ -340,6 +341,77 @@ test("follow-up overlap reuses the first refused window", async () => {
   assert.equal(allowed.success, true);
   assert.match(allowed.slot_string, /^19:00 - 21:00/);
   assert.equal(allowed.overlapped, true);
+});
+
+test("missed named anchor does not reuse last refused window", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const { pageUid, parentUid } = setupParent(g);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  assert.equal(refused.success, false);
+
+  g.deps.getAgentUserMessage = () => "schedule laundry during yoga";
+  const allowed = await tool.execute({
+    date: "August 27th, 2026", start: "09:00", end: "10:00", title: "Laundry", collide: "allow",
+  });
+
+  assert.equal(allowed.success, true);
+  assert.match(allowed.slot_string, /^09:00 - 10:00/);
+  assert.equal(allowed.overlapped, undefined);
+});
+
+test("stale last collision at is not reused on overlap follow-up", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const { pageUid, parentUid } = setupParent(g);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  assert.equal(refused.success, false);
+
+  getLastScheduleCollision().at = Date.now() - (5 * 60 * 1000 + 1000);
+  g.deps.getAgentUserMessage = () => "overlap";
+  const result = await tool.execute({
+    date: "August 27th, 2026", start: "09:00", end: "10:00", title: "Laundry", collide: "allow",
+  });
+
+  assert.equal(result.success, true);
+  assert.match(result.slot_string, /^09:00 - 10:00/);
+});
+
+test("title fallback does not cross schedule parents", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const { pageUid, parentUid } = setupParent(g);
+  const pageUidB = g.addPage("August 28th, 2026");
+  const parentUidB = g.insertBlock(pageUidB, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  assert.equal(refused.success, false);
+
+  g.deps.getAgentUserMessage = () => "overlap";
+  await assert.rejects(
+    () => tool.execute({
+      date: "August 28th, 2026", parent_uid: parentUidB,
+      start: "09:00", end: "10:00", collide: "allow",
+    }),
+    /title is required/
+  );
 });
 
 test("schedule-allow-overlap setting: true allows, false refuses", async () => {
