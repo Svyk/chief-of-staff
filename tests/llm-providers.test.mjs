@@ -29,6 +29,8 @@ import {
   isCodexProvider,
   callCodexResponsesStreaming,
   callAnthropic,
+  filterToolsByRelevance,
+  dropBypassToolsForTimedBlock,
 } from "../src/llm-providers.js";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -951,4 +953,72 @@ test("getOpenAiApiKey does not treat a legacy sk- key as OpenAI for kimi-coding 
     "llm-api-key": "sk-deepseek-key",
   }));
   assert.equal(getOpenAiApiKey(dsExt), "");
+});
+// ── Timed-block tool pack (filterToolsByRelevance + dropBypassToolsForTimedBlock)
+
+const TIMED_BLOCK_TOOLS = [
+  { name: "cos_schedule_block" },
+  { name: "roam_create_block" },
+  { name: "roam_create_blocks" },
+  { name: "roam_batch_write" },
+  { name: "roam_create_todo" },
+  { name: "roam_update_block" },
+  { name: "roam_search" },
+  { name: "roam_get_page" },
+  { name: "ROAM_ROUTE" },
+  { name: "cos_cron_create" },
+];
+
+test("timed-block prompt: bypass + cron tools dropped, cos_schedule_block kept", () => {
+  initLlmProviders({ debugLog: () => {} });
+  const out = filterToolsByRelevance(
+    TIMED_BLOCK_TOOLS,
+    "schedule a gaming session 9pm to midnight [sandbox]"
+  );
+  const names = out.map((t) => t.name);
+  assert.ok(!names.includes("roam_create_block"), "roam_create_block must be dropped");
+  assert.ok(!names.includes("roam_create_blocks"), "roam_create_blocks must be dropped");
+  assert.ok(!names.includes("roam_batch_write"), "roam_batch_write must be dropped");
+  assert.ok(!names.includes("roam_create_todo"), "roam_create_todo must be dropped");
+  assert.ok(!names.includes("roam_update_block"), "roam_update_block must be dropped");
+  assert.ok(!names.includes("cos_cron_create"), "bare 'schedule' must not pull in cos_cron_*");
+  assert.ok(names.includes("cos_schedule_block"));
+  assert.ok(names.includes("roam_search"));
+  assert.ok(names.includes("roam_get_page"));
+  assert.ok(names.includes("ROAM_ROUTE"));
+});
+
+test("cron prompt: cos_cron_create still present", () => {
+  initLlmProviders({ debugLog: () => {} });
+  const out = filterToolsByRelevance(TIMED_BLOCK_TOOLS, "schedule a cron every 5 min");
+  const names = out.map((t) => t.name);
+  assert.ok(names.includes("cos_cron_create"));
+  // Not a one-window intent → bypass tools untouched
+  assert.ok(names.includes("roam_create_block"));
+});
+
+test("calendar question: roam_create_block still present", () => {
+  initLlmProviders({ debugLog: () => {} });
+  const out = filterToolsByRelevance(TIMED_BLOCK_TOOLS, "what's on my calendar");
+  const names = out.map((t) => t.name);
+  assert.ok(names.includes("roam_create_block"));
+  assert.ok(!names.includes("cos_cron_create"), "calendar reads are not cron-like");
+});
+
+test("dropBypassToolsForTimedBlock: no-op for non-slot messages and after whitelist", () => {
+  initLlmProviders({ debugLog: () => {} });
+  // Non-slot message → identity
+  assert.equal(dropBypassToolsForTimedBlock(TIMED_BLOCK_TOOLS, "hello there"), TIMED_BLOCK_TOOLS);
+  // Slot message → drops even when the array came from a skill whitelist
+  const whitelisted = [
+    { name: "cos_schedule_block" },
+    { name: "roam_create_block" }, // ROAM_CORE_TOOLS member a whitelist run keeps
+    { name: "cos_cron_create" },
+    { name: "roam_search" },
+  ];
+  const names = dropBypassToolsForTimedBlock(
+    whitelisted,
+    "schedule gaming 9pm to midnight [sandbox]"
+  ).map((t) => t.name);
+  assert.deepEqual(names, ["cos_schedule_block", "roam_search"]);
 });

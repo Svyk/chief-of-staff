@@ -29,6 +29,8 @@ import {
   isFailoverEligibleError, isOpenAICompatible, filterToolsByRelevance,
   buildEffectiveFailoverChain, isCustomProvider, getCustomProviderConfig
 } from "./llm-providers.js";
+import { dropBypassToolsForTimedBlock } from "./llm-providers.js";
+import { buildForcedScheduleToolCall } from "./schedule-block.js";
 
 import {
   getConversationTurns, getConversationMessages,
@@ -363,6 +365,10 @@ export async function runAgentLoop(userMessage, options = {}) {
   } else {
     tools = filterToolsByRelevance(allTools, userMessage);
   }
+  // Timed-block tool pack: on a one-window schedule request, strip the tools
+  // that bypass cos_schedule_block (direct block writes, cron) even when a
+  // skill whitelist kept ROAM_CORE_TOOLS like roam_create_block.
+  tools = dropBypassToolsForTimedBlock(tools, userMessage);
 
   // Read-only addendum. Plan mode (`/plan`) and inbox mode both run read-only
   // but need different wording: plan mode must produce a plan (future tense so it
@@ -745,6 +751,18 @@ export async function runAgentLoop(userMessage, options = {}) {
           }
         }
         toolCalls = extractToolCalls(provider, response);
+      }
+
+      // Force-dispatch: the model answered a one-window schedule request with
+      // no tool call at all — inject the cos_schedule_block call the user
+      // asked for (built from THEIR times, not the model's prose). Downstream
+      // guards then see a real tool call; no empty-response nudge is sent.
+      if (toolCalls.length === 0) {
+        const forced = buildForcedScheduleToolCall(userMessage);
+        if (forced) {
+          toolCalls = [forced];
+          deps.debugLog("[Chief flow] Force-dispatch: injected cos_schedule_block for a timed-block request the model answered without tools.");
+        }
       }
 
       deps.debugLog("[Chief flow] runAgentLoop iteration:", {

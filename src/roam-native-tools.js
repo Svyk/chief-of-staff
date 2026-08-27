@@ -5,7 +5,7 @@
 // provider tool-count limits (e.g. OpenAI's 128-tool cap).
 
 import { extractAuditableSkillLines, summariseSkillTokens } from "./parse-utils.js";
-import { buildScheduleBlockTool } from "./schedule-block.js";
+import { buildScheduleBlockTool, isSandboxUserMessage } from "./schedule-block.js";
 
 let deps = {};
 let roamNativeToolsCache = null;
@@ -1815,6 +1815,10 @@ export function getRoamNativeTools() {
 
         let targetUid = String(parent_uid || "").trim();
         if (!targetUid) {
+          // Sandbox sessions never default to today's daily page.
+          if (isSandboxUserMessage(deps.getAgentUserMessage?.())) {
+            return { error: "Sandbox session: parent_uid is required; the today-page default is disabled." };
+          }
           const { pageUid } = await deps.ensureDailyPageUid();
           targetUid = pageUid;
         } else {
