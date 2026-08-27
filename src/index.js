@@ -406,7 +406,8 @@ const SETTINGS_KEYS = {
   postWriteShortCircuit: "post-write-short-circuit",
   claimedActionEscalationAllProviders: "claimed-action-escalation-all-providers",
   skillMaxIterations: "skill-max-iterations",
-  skillContinueAfterWrite: "skill-continue-after-write"
+  skillContinueAfterWrite: "skill-continue-after-write",
+  autoApproveMode: "auto-approve-mode"
 };
 const TOOLS_SCHEMA_VERSION = 3;
 const AUTH_POLL_INTERVAL_MS = 9000;
@@ -6398,6 +6399,9 @@ function onload({ extensionAPI }) {
   if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.skillContinueAfterWrite) === undefined) {
     extensionAPI.settings.set(SETTINGS_KEYS.skillContinueAfterWrite, true);
   }
+  if (extensionAPI?.settings?.get?.(SETTINGS_KEYS.autoApproveMode) === undefined) {
+    extensionAPI.settings.set(SETTINGS_KEYS.autoApproveMode, "off");
+  }
 
   initUsageTracking({
     SETTINGS_KEYS,
@@ -7024,6 +7028,8 @@ function onload({ extensionAPI }) {
     getComposioSafeMultiExecuteSlugAllowlist: () => COMPOSIO_SAFE_MULTI_EXECUTE_SLUG_ALLOWLIST,
     promptToolExecutionApproval,
     showInfoToast,
+    getSettingString,
+    SETTINGS_KEYS,
     INBOX_READ_ONLY_TOOL_ALLOWLIST,
     WRITE_TOOL_NAMES,
     MAX_TOOL_RESULT_CHARS,
