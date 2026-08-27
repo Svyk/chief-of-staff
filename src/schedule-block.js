@@ -104,6 +104,7 @@ function parseDurationMinutes(text) {
   const m = DURATION_RE.exec(String(text || ""));
   if (!m) return null;
   const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
   const unit = m[2].toLowerCase();
   if (/^min/.test(unit)) return n;
   return n * 60;
@@ -365,7 +366,7 @@ function resolveCollidePolicy(deps, args, userMessage) {
 
 /**
  * True when the user is asking for ONE timed window on the daily plan:
- * two parseable times + a schedule verb, not cron-like, not a gcal request.
+ * two parseable times (or start + duration) + a place-block verb, not cron-like, not a gcal request.
  */
 export function isScheduleSlotIntent(text) {
   const raw = String(text || "");
