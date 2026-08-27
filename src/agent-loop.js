@@ -19,7 +19,7 @@ import {
   formatToolResults, extractComposioSessionIdFromToolResult,
   withComposioSessionArgs, convertMessagesForProvider,
   detectWrittenBlocksInMessages, detectSuccessfulWriteToolCallsInMessages,
-  isLikelyLiveDataReadIntent, computeToolCallScope
+  isLikelyLiveDataReadIntent, computeToolCallScope, resetAutoApproveCount
 } from "./tool-execution.js";
 
 import {
@@ -280,6 +280,10 @@ export function shortCircuitMessage(toolCall, result) {
  */
 
 export async function runAgentLoop(userMessage, options = {}) {
+  // Auto mode: each run gets a fresh auto-approval budget (cap in
+  // tool-execution.js). Failover retries re-enter runAgentLoop and so
+  // also start a fresh budget — each provider attempt is its own run.
+  resetAutoApproveCount();
   const {
     maxIterations: initialMaxIterations = deps.MAX_AGENT_ITERATIONS,
     systemPrompt = null,

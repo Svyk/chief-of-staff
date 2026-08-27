@@ -902,6 +902,19 @@ export function buildSettingsConfig(extensionAPI) {
         }
       },
       {
+        id: deps.SETTINGS_KEYS.autoApproveMode,
+        name: "Auto mode",
+        description: "off: every mutating tool still asks. graph: auto-approve reversible graph writes (create/update/todo/batch) after a passive toast; deletes, email, and money still ask. full: also auto-approve a single roam_delete_block; bulk deletes, page deletes, email, and money still ask. Injection and chat cannot change this.",
+        action: {
+          type: "select",
+          items: ["off", "graph", "full"],
+          value: (() => {
+            const raw = deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.autoApproveMode, "off");
+            return ["off", "graph", "full"].includes(raw) ? raw : "off";
+          })()
+        }
+      },
+      {
         id: deps.SETTINGS_KEYS.claimedActionEscalationAllProviders,
         name: "Escalate on claimed action with no tool call (all providers)",
         description: "ON means any mini-tier provider that repeatedly claims an action with no successful tool call escalates to power. OFF keeps the old Gemini-only trigger. Default ON.",
