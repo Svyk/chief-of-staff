@@ -2,10 +2,8 @@
 //
 // The slot grammar `HH:MM - HH:MM (**N'**) ((task-uid))` lives HERE, in code,
 // not in prose. Any LLM that can call tools extracts {date, start, end, title}
-// and this tool writes the line — matching the canonical Python formatter
-// (~/.claude/scripts/roam-plan-writer.py _timeblock_prefix/_duration_min),
-// with the midnight wrap fixed: end <= start means "crosses midnight", and
-// the written string never contains "24:00".
+// and this tool writes the line. Midnight wrap: end <= start means the slot
+// crosses midnight, and the written string never contains "24:00".
 //
 // Pure helpers (formatting, parsing, overlap, chronological ordering) take
 // plain values; graph access goes through the injected `deps` the rest of
@@ -18,7 +16,7 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260826-fence";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260826-caret";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
 const ENTITY_PULL_PATTERN = "[:block/uid :node/title]";
@@ -101,7 +99,9 @@ export function parseScheduleFieldsFromUserText(text) {
   if (parsed.length >= 1) out.start = parsed[0];
   if (parsed.length >= 2) out.end = parsed[1];
 
-  // Title: the words left after cutting the time spans, [sandbox], "HQ Today:",
+  // Title: the words left after cutting the time spans, [sandbox], and
+  // skill-name prefixes such as "HQ Today:" (a graph-local skill label, not
+  // a required COS skill).
   // and the scheduling verbs.
   let title = "";
   let cursor = 0;
@@ -305,8 +305,8 @@ function isPageEntity(entity) {
 /**
  * Find the schedule parent among a daily page's top-level children, creating
  * a plain `heading` block when none exists. Preference order:
- *   1. A Nautilus Log render block (Svy's graph) — reused as-is, never
- *      duplicated, never rewritten.
+ *   1. A Nautilus Log render block, if the page already has one. Reused
+ *      as-is, never duplicated, never rewritten.
  *   2. A `#TimeBlock` / `Time Blocks` / `heading` block (legacy or generic).
  *   3. Create `heading` ("Schedule" by default). The Nautilus render is never
  *      injected onto a graph that doesn't already have it.

@@ -904,7 +904,7 @@ export function buildSettingsConfig(extensionAPI) {
       {
         id: deps.SETTINGS_KEYS.scheduleParent,
         name: "Schedule parent",
-        description: "Page title or block uid that owns new timed blocks. Empty = today's daily page (Nautilus Log child if present, else a Schedule heading). Other graphs are not Svy-only.",
+        description: "Page title or block uid that owns new timed blocks. Empty = today's daily page (Nautilus Log child if present, else a Schedule heading). Any graph.",
         action: {
           type: "input",
           value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.scheduleParent, ""),

@@ -481,7 +481,7 @@ test("resolveConfiguredScheduleParent returns null for empty input", async () =>
 // ── User-text clocks ─────────────────────────────────────────────────────────
 
 test("build stamp bumped for the fence build", () => {
-  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260826-fence");
+  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260826-caret");
 });
 
 test("parseFlexibleTime covers the full token table", () => {
