@@ -404,6 +404,21 @@ describe("shouldShortCircuitAfterCollision", () => {
     }), true);
   });
 
+  it("is false for cos_schedule_block success with overlapped and informational colliding_string", () => {
+    const toolResults = [{
+      toolCall: { name: "cos_schedule_block", arguments: {} },
+      result: {
+        success: true,
+        overlapped: true,
+        slot_string: "21:00 - 22:00 (**60'**) ((new))",
+        colliding_string: "21:00 - 00:00 (**180'**) ((abc))",
+      },
+    }];
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults, skillActive: false, skillContinueAfterWrite: true,
+    }), false);
+  });
+
   it("is false without a colliding_string or for other tools", () => {
     assert.equal(shouldShortCircuitAfterCollision({
       toolResults: [{ toolCall: { name: "cos_schedule_block", arguments: {} }, result: { success: true } }],

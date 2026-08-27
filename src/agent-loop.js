@@ -295,7 +295,8 @@ export function shouldShortCircuitAfterCollision({ toolResults, skillActive, ski
   const inner = last?.toolCall?.arguments?.tool_name;
   const isSchedule = name === "cos_schedule_block" || (name === "ROAM_EXECUTE" && inner === "cos_schedule_block");
   const colliding = last?.result?.colliding_string;
-  return Boolean(isSchedule && colliding);
+  const failed = last?.result?.success === false || last?.result?.error;
+  return Boolean(isSchedule && colliding && failed);
 }
 
 export function collisionShortCircuitMessage(result) {
