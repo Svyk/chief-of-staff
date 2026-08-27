@@ -7,6 +7,14 @@ import {
   rangesOverlap,
   insertSlotChronologically,
   buildScheduleBlockTool,
+  isSandboxUserMessage,
+  resolveConfiguredScheduleParent,
+  parseFlexibleTime,
+  parseScheduleFieldsFromUserText,
+  isCronLikeScheduleIntent,
+  isScheduleSlotIntent,
+  buildForcedScheduleToolCall,
+  COS_SCHEDULE_BLOCK_BUILD,
 } from "../src/schedule-block.js";
 
 const NAUTILUS_STRING = "{{roam/render: ((roam-render-Nautilus-Log-cljs))}}";
@@ -68,7 +76,7 @@ function makeFakeGraph() {
       pull: (pattern, ref) => {
         const uid = ref[1];
         if (!blocks.has(uid)) return null;
-        return {
+        const entity = {
           ":block/uid": uid,
           ":block/children": childrenOf(uid).map((c) => ({
             ":block/uid": c.uid,
@@ -76,6 +84,9 @@ function makeFakeGraph() {
             ":block/order": c.order,
           })),
         };
+        const block = blocks.get(uid);
+        if (block.isPage) entity[":node/title"] = block.string;
+        return entity;
       },
     },
     updateBlock: async ({ block }) => {
@@ -361,4 +372,258 @@ test("missing start, end, or title is rejected", async () => {
   await assert.rejects(() => tool.execute({ start: "09:00", title: "x" }), /end/);
   await assert.rejects(() => tool.execute({ start: "09:00", end: "10:00" }), /title/);
   await assert.rejects(() => tool.execute({ start: "25:00", end: "26:00", title: "x" }), /start/);
+});
+// ── Sandbox pin + schedule-parent setting ────────────────────────────────────
+
+test("isSandboxUserMessage matches [sandbox] case-insensitively", () => {
+  assert.equal(isSandboxUserMessage("schedule gaming 21:00 [sandbox]"), true);
+  assert.equal(isSandboxUserMessage("try [SANDBOX] first"), true);
+  assert.equal(isSandboxUserMessage("schedule gaming 21:00"), false);
+  assert.equal(isSandboxUserMessage(undefined), false);
+  assert.equal(isSandboxUserMessage(null), false);
+});
+
+test("[sandbox] user text pins the slot to the sandbox page, ignoring model date/parent_uid", async () => {
+  const g = makeFakeGraph();
+  const todayTitle = fmtRoamDate(new Date());
+  const todayUid = g.addPage(todayTitle);
+  const todayNautilus = g.insertBlock(todayUid, NAUTILUS_STRING);
+  const sandboxUid = g.addPage("COS Daily Plan Sandbox");
+  const sandboxNautilus = g.insertBlock(sandboxUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () =>
+    "HQ Today: schedule a gaming session 9 pm to midnight league of legends [sandbox]";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: todayTitle, parent_uid: todayNautilus,
+    start: "21:00", end: "00:00", title: "Gaming: league of legends",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, sandboxNautilus, "slot must go under the sandbox page's Nautilus");
+  assert.equal(g.blocks.get(result.slot_uid).parent, sandboxNautilus);
+  assert.equal(g.childrenOf(todayNautilus).length, 0, "today's Nautilus must stay empty");
+});
+
+test("[sandbox] honours the schedule-sandbox-page setting override", async () => {
+  const g = makeFakeGraph();
+  const altUid = g.addPage("Alt Sandbox");
+  const altNautilus = g.insertBlock(altUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () => "test [sandbox]";
+  g.deps.getSettingString = (key, fallback) =>
+    key === "schedule-sandbox-page" ? "Alt Sandbox" : fallback;
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({ start: "10:00", end: "11:00", title: "Sandbox override check" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, altNautilus);
+});
+
+test("schedule-parent setting (page title) routes the slot under that page's schedule parent", async () => {
+  const g = makeFakeGraph();
+  const todayTitle = fmtRoamDate(new Date());
+  const todayUid = g.addPage(todayTitle);
+  const todayNautilus = g.insertBlock(todayUid, NAUTILUS_STRING);
+  const teamUid = g.addPage("Team Plan");
+  const teamNautilus = g.insertBlock(teamUid, NAUTILUS_STRING);
+  g.deps.getSettingString = (key, fallback) =>
+    key === "schedule-parent" ? "Team Plan" : fallback;
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: todayTitle, start: "14:00", end: "15:00", title: "Roadmap sync",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, teamNautilus, "slot must go under Team Plan's Nautilus");
+  assert.equal(g.blocks.get(result.slot_uid).parent, teamNautilus);
+  assert.equal(g.childrenOf(todayNautilus).length, 0, "today's Nautilus must stay empty");
+});
+
+test("schedule-parent setting (page uid) resolves through the page's schedule parent, not raw page children", async () => {
+  const g = makeFakeGraph();
+  const teamUid = g.addPage("Team Plan");
+  const teamNautilus = g.insertBlock(teamUid, NAUTILUS_STRING);
+  g.deps.getSettingString = (key, fallback) =>
+    key === "schedule-parent" ? teamUid : fallback;
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    start: "14:00", end: "15:00", title: "Roadmap sync",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, teamNautilus, "a page uid must resolve to its schedule parent");
+  assert.equal(g.blocks.get(result.slot_uid).parent, teamNautilus);
+});
+
+test("parent_uid pointing at a page resolves through findScheduleParent", async () => {
+  const g = makeFakeGraph();
+  const teamUid = g.addPage("Team Plan");
+  const teamNautilus = g.insertBlock(teamUid, NAUTILUS_STRING);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    start: "09:00", end: "10:00", title: "Standup", parent_uid: teamUid,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, teamNautilus);
+  assert.equal(g.blocks.get(result.slot_uid).parent, teamNautilus);
+});
+
+test("resolveConfiguredScheduleParent returns null for empty input", async () => {
+  const g = makeFakeGraph();
+  assert.equal(await resolveConfiguredScheduleParent(g.deps, "", "Schedule"), null);
+  assert.equal(await resolveConfiguredScheduleParent(g.deps, "   ", "Schedule"), null);
+});
+// ── User-text clocks ─────────────────────────────────────────────────────────
+
+test("build stamp bumped for the fence build", () => {
+  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260826-fence");
+});
+
+test("parseFlexibleTime covers the full token table", () => {
+  assert.equal(parseFlexibleTime("9pm"), "21:00");
+  assert.equal(parseFlexibleTime("9 pm"), "21:00");
+  assert.equal(parseFlexibleTime("9:00pm"), "21:00");
+  assert.equal(parseFlexibleTime("9:00 pm"), "21:00");
+  assert.equal(parseFlexibleTime("midnight"), "00:00");
+  assert.equal(parseFlexibleTime("noon"), "12:00");
+  assert.equal(parseFlexibleTime("12am"), "00:00");
+  assert.equal(parseFlexibleTime("12pm"), "12:00");
+  assert.equal(parseFlexibleTime("21:00"), "21:00");
+  assert.equal(parseFlexibleTime("6:15"), "06:15");
+  assert.equal(parseFlexibleTime("24:00"), "00:00");
+  assert.equal(parseFlexibleTime("9:5"), null);
+  assert.equal(parseFlexibleTime(""), null);
+  assert.equal(parseFlexibleTime(null), null);
+  assert.equal(parseFlexibleTime("25:00"), null);
+  assert.equal(parseFlexibleTime("13pm"), null);
+});
+
+test("parseScheduleFieldsFromUserText: two times in order are start/end", () => {
+  const f = parseScheduleFieldsFromUserText("schedule gaming 9pm to midnight [sandbox]");
+  assert.equal(f.start, "21:00");
+  assert.equal(f.end, "00:00");
+  assert.equal(f.title, "gaming");
+});
+
+test("parseScheduleFieldsFromUserText: meridiem inheritance and bare hours", () => {
+  const inherit = parseScheduleFieldsFromUserText("block out focus 6-7am");
+  assert.equal(inherit.start, "06:00");
+  assert.equal(inherit.end, "07:00");
+
+  const bare = parseScheduleFieldsFromUserText("schedule call 7-7:30");
+  assert.equal(bare.start, "07:00");
+  assert.equal(bare.end, "07:30");
+
+  const quarters = parseScheduleFieldsFromUserText("schedule review 6:15-6:45");
+  assert.equal(quarters.start, "06:15");
+  assert.equal(quarters.end, "06:45");
+});
+
+test("parseScheduleFieldsFromUserText: title strips verbs, [sandbox], HQ Today:", () => {
+  const f = parseScheduleFieldsFromUserText(
+    "HQ Today: schedule a gaming session 9 pm to midnight league of legends [sandbox]"
+  );
+  assert.equal(f.start, "21:00");
+  assert.equal(f.end, "00:00");
+  assert.ok(!/\[sandbox\]/i.test(f.title));
+  assert.ok(!/HQ Today:/i.test(f.title));
+  assert.ok(!/\b(schedule|from|to|until|at)\b/i.test(f.title));
+  assert.ok(f.title.includes("gaming"));
+  assert.ok(f.title.includes("league of legends"));
+
+  const empty = parseScheduleFieldsFromUserText("schedule 9pm to 10pm");
+  assert.equal(empty.title, "Scheduled block");
+});
+
+test("isCronLikeScheduleIntent: cron/job/recurring true, one-window false", () => {
+  assert.equal(isCronLikeScheduleIntent("schedule a cron every 5 min"), true);
+  assert.equal(isCronLikeScheduleIntent("set up a recurring reminder"), true);
+  assert.equal(isCronLikeScheduleIntent("run this hourly"), true);
+  assert.equal(isCronLikeScheduleIntent("remind me in 10 min"), true);
+  assert.equal(isCronLikeScheduleIntent("add a crontab entry"), true);
+  assert.equal(isCronLikeScheduleIntent("schedule a job that syncs nightly"), true);
+  assert.equal(isCronLikeScheduleIntent("schedule a gaming session 9 pm to midnight"), false);
+  assert.equal(isCronLikeScheduleIntent("what's on my calendar"), false);
+});
+
+test("isScheduleSlotIntent: two times + verb, not cron-like, not calendar reads", () => {
+  assert.equal(isScheduleSlotIntent("schedule a gaming session 9 pm to midnight"), true);
+  assert.equal(isScheduleSlotIntent("schedule gaming 9pm to midnight [sandbox]"), true);
+  assert.equal(isScheduleSlotIntent("block out focus 6-7am"), true);
+  assert.equal(isScheduleSlotIntent("put gym from 18:00 to 19:00"), true);
+  assert.equal(isScheduleSlotIntent("time-block reading 20:00-21:00"), true);
+  assert.equal(isScheduleSlotIntent("schedule a cron every 5 min"), false);
+  assert.equal(isScheduleSlotIntent("what's on my calendar"), false);
+  assert.equal(isScheduleSlotIntent("schedule something tomorrow"), false);
+  assert.equal(isScheduleSlotIntent("add this to my google calendar 9-10"), false);
+  assert.equal(isScheduleSlotIntent(""), false);
+});
+
+test("buildForcedScheduleToolCall: builds cos_schedule_block from user times", () => {
+  const call = buildForcedScheduleToolCall("schedule gaming 9pm to midnight [sandbox]");
+  assert.deepEqual(call, {
+    name: "cos_schedule_block",
+    arguments: { start: "21:00", end: "00:00", title: "gaming" }
+  });
+
+  const fallback = buildForcedScheduleToolCall("schedule 9pm to 10pm");
+  assert.equal(fallback.arguments.title, "Scheduled block");
+
+  assert.equal(buildForcedScheduleToolCall("what's on my calendar"), null);
+  assert.equal(buildForcedScheduleToolCall("schedule a cron every 5 min"), null);
+  assert.equal(buildForcedScheduleToolCall("schedule something tomorrow"), null);
+});
+
+test("user-text clocks overwrite model start/end under [sandbox]", async () => {
+  const g = makeFakeGraph();
+  const todayTitle = fmtRoamDate(new Date());
+  const todayUid = g.addPage(todayTitle);
+  const todayNautilus = g.insertBlock(todayUid, NAUTILUS_STRING);
+  const sandboxUid = g.addPage("COS Daily Plan Sandbox");
+  const sandboxNautilus = g.insertBlock(sandboxUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () => "schedule gaming 9pm to midnight [sandbox]";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: todayTitle, parent_uid: todayNautilus,
+    start: "09:00", end: "12:00", title: "Gaming",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, sandboxNautilus);
+  assert.equal(result.slot_string, `21:00 - 00:00 (**180'**) ((${result.task_uid}))`);
+  assert.equal(g.childrenOf(todayNautilus).length, 0, "today's Nautilus must stay empty");
+});
+
+test("user-text clocks overwrite model times even without [sandbox]", async () => {
+  const g = makeFakeGraph();
+  const todayTitle = fmtRoamDate(new Date());
+  const todayUid = g.addPage(todayTitle);
+  const nautilus = g.insertBlock(todayUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () => "schedule gaming 9pm to midnight";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: todayTitle, start: "09:00", end: "12:00", title: "Gaming",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, nautilus);
+  assert.equal(result.slot_string, `21:00 - 00:00 (**180'**) ((${result.task_uid}))`);
+});
+
+test("model title is kept; only start/end are overwritten", async () => {
+  const g = makeFakeGraph();
+  g.deps.getAgentUserMessage = () => "schedule gaming 9pm to midnight";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({ start: "09:00", end: "12:00", title: "Model Title Stays" });
+
+  assert.equal(result.success, true);
+  assert.equal(g.blocks.get(result.task_uid).string, "{{[[TODO]]}} Model Title Stays");
 });

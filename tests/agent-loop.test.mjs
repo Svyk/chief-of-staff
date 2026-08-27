@@ -23,6 +23,8 @@ import {
   shouldEscalateClaimedAction,
   shouldShortCircuitAfterWrite,
   shortCircuitMessage,
+  shouldShortCircuitAfterCollision,
+  collisionShortCircuitMessage,
 } from "../src/agent-loop.js";
 import { clampSkillMaxIterations } from "../src/settings-config.js";
 
@@ -356,6 +358,73 @@ describe("buildToolCacheKey", () => {
       timeMin: "00:00:00"
     });
     assert.strictEqual(key1, key2);
+  });
+});
+// ── Collision short-circuit ────────────────────────────────────────────────
+
+describe("shouldShortCircuitAfterCollision", () => {
+  const collisionResult = () => [{
+    toolCall: { name: "cos_schedule_block", arguments: {} },
+    result: {
+      success: false,
+      error: "Time collision: 21:00 - 00:00 overlaps existing slot.",
+      colliding_uid: "uid007",
+      colliding_string: "21:00 - 00:00 (**180'**) ((abc))",
+    },
+  }];
+
+  it("is true when the last result is a cos_schedule_block collision and no skill is active", () => {
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: collisionResult(), skillActive: false, skillContinueAfterWrite: true,
+    }), true);
+  });
+
+  it("is true for a ROAM_EXECUTE-wrapped cos_schedule_block collision", () => {
+    const toolResults = [{
+      toolCall: { name: "ROAM_EXECUTE", arguments: { tool_name: "cos_schedule_block" } },
+      result: { success: false, colliding_string: "21:00 - 00:00 (**180'**) ((abc))" },
+    }];
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults, skillActive: false, skillContinueAfterWrite: true,
+    }), true);
+  });
+
+  it("is false when a skill is active and skill-continue-after-write is on/undefined", () => {
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: collisionResult(), skillActive: true, skillContinueAfterWrite: true,
+    }), false);
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: collisionResult(), skillActive: true, skillContinueAfterWrite: undefined,
+    }), false);
+  });
+
+  it("is true during a skill run when skill-continue-after-write is OFF", () => {
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: collisionResult(), skillActive: true, skillContinueAfterWrite: false,
+    }), true);
+  });
+
+  it("is false without a colliding_string or for other tools", () => {
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: [{ toolCall: { name: "cos_schedule_block", arguments: {} }, result: { success: true } }],
+      skillActive: false, skillContinueAfterWrite: true,
+    }), false);
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: [{ toolCall: { name: "roam_create_block", arguments: {} }, result: { colliding_string: "x" } }],
+      skillActive: false, skillContinueAfterWrite: true,
+    }), false);
+    assert.equal(shouldShortCircuitAfterCollision({
+      toolResults: [], skillActive: false, skillContinueAfterWrite: true,
+    }), false);
+  });
+});
+
+describe("collisionShortCircuitMessage", () => {
+  it("echoes colliding_string verbatim, no paraphrase", () => {
+    assert.equal(
+      collisionShortCircuitMessage({ colliding_string: "21:00 - 00:00 (**180'**) ((abc))" }),
+      "Time collision: 21:00 - 00:00 (**180'**) ((abc))"
+    );
   });
 });
 

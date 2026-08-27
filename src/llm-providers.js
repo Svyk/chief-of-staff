@@ -20,6 +20,7 @@ import {
   createCodexStreamState,
   reduceCodexSseEvent
 } from "./codex-responses.js";
+import { isCronLikeScheduleIntent, isScheduleSlotIntent } from "./schedule-block.js";
 
 // ── DI container ─────────────────────────────────────────────────────────────
 let deps = {};
@@ -1411,12 +1412,36 @@ export function getPromotedServerNames(userMessage, localMcpTools, remoteMcpTool
   return promoted;
 }
 
+// Tools a model can use to bypass cos_schedule_block on a one-window schedule
+// request: direct block writes (markdown parsing mangles the slot grammar) and
+// the cron family (a one-off window is not a cron job).
+const TIMED_BLOCK_BYPASS_TOOLS = new Set([
+  "roam_create_block", "roam_create_blocks", "roam_batch_write",
+  "roam_create_todo", "roam_update_block"
+]);
+
+/**
+ * On a one-window schedule request ("schedule gaming 9pm to midnight"), drop
+ * the tools that let the model write the slot by hand or as a cron job, so
+ * cos_schedule_block is the only path. Runs after BOTH the relevance filter
+ * and skill-whitelist filtering (runAgentLoop applies it there too).
+ */
+export function dropBypassToolsForTimedBlock(tools, userMessage) {
+  if (!isScheduleSlotIntent(userMessage)) return tools;
+  return (Array.isArray(tools) ? tools : []).filter((t) => {
+    const name = t?.name || "";
+    if (TIMED_BLOCK_BYPASS_TOOLS.has(name)) return false;
+    if (name.startsWith("cos_cron_")) return false;
+    return true;
+  });
+}
+
 export function filterToolsByRelevance(tools, userMessage) {
   const text = String(userMessage || "").toLowerCase();
 
   // Only include optional tool categories when the query explicitly mentions them
   const needsBt = /\b(tasks?|todo|project|done|overdue|due|bt_|better\s*tasks?|assign|delegate|waiting.for)\b/.test(text);
-  const needsCron = /\b(cron|schedule[ds]?|recurring|every\s+\d+\s+(min|hour)|hourly|timer|remind\s+me\s+in)\b/.test(text);
+  const needsCron = isCronLikeScheduleIntent(userMessage);
   const needsEmail = /\b(email|gmail|inbox|unread|mail|draft)\b/.test(text);
   const needsCalendar = /\b(cal[ea]n[dn]a?[rt]|event|meeting|appointment|agenda|gcal)\b/.test(text);
   const needsComposio = /\b(composio|connect|integration|install|deregister|connected\s+tools?)\b/.test(text);
@@ -1460,11 +1485,11 @@ export function filterToolsByRelevance(tools, userMessage) {
     const dropIndices = new Set(droppable.slice(0, excess).map(d => d.index));
     const capped = filtered.filter((_, i) => !dropIndices.has(i));
     deps.debugLog("[Chief flow] Tool cap enforced:", filtered.length, "→", capped.length, `(dropped ${excess} direct MCP tools)`);
-    return capped;
+    return dropBypassToolsForTimedBlock(capped, userMessage);
   }
 
   if (filtered.length < tools.length) {
     deps.debugLog("[Chief flow] Tool filtering:", tools.length, "→", filtered.length, "tools");
   }
-  return filtered;
+  return dropBypassToolsForTimedBlock(filtered, userMessage);
 }

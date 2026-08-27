@@ -18,9 +18,147 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260826-pages";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260826-fence";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
+const ENTITY_PULL_PATTERN = "[:block/uid :node/title]";
+const DEFAULT_SANDBOX_PAGE = "COS Daily Plan Sandbox";
+/** True when the user message carries the [sandbox] pin (case-insensitive). */
+export function isSandboxUserMessage(text) {
+  return /\[sandbox\]/i.test(String(text || ""));
+}
+
+// ── User-text clocks ─────────────────────────────────────────────────────────
+// The user's own words are the source of truth for start/end: models routinely
+// mis-convert "9pm" or invent a 3-hour block. These parsers pull the times out
+// of the raw user text so the executor can overwrite the model's args.
+
+const FLEX_TIME_RE = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i;
+// Tokeniser for times inside free text. Order matters: meridiem-bearing and
+// HH:MM forms before the bare-hour fallback. A meridiem may follow a space
+// ("9:00 pm"). `\b` keeps "180" or "2026" from matching as bare hours.
+const TIME_TOKEN_GLOBAL_RE = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\b|\bmidnight\b|\bnoon\b/gi;
+
+/**
+ * Parse one time token to "HH:MM" (24-hour), or null.
+ * "9pm"/"9:00 pm" → "21:00", "midnight"/"12am" → "00:00", "noon"/"12pm" → "12:00",
+ * "21:00"/"6:15" → zero-padded as-is, "24:00" → "00:00", "9:5" → null.
+ */
+export function parseFlexibleTime(token) {
+  const raw = String(token || "").trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "midnight") return "00:00";
+  if (raw === "noon") return "12:00";
+  const m = FLEX_TIME_RE.exec(raw);
+  if (!m) return null;
+  let hours = Number(m[1]);
+  const mins = m[2] != null ? Number(m[2]) : 0;
+  const meridiem = m[3] ? m[3].toLowerCase() : null;
+  if (mins > 59) return null;
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return null;
+    hours = meridiem === "am" ? hours % 12 : (hours % 12) + 12;
+  } else {
+    if (hours > 24 || (hours === 24 && mins !== 0)) return null;
+    if (hours === 24) hours = 0; // end-of-day wrap, same as normalizeTime
+  }
+  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+}
+
+// Title filler stripped along with the time tokens. Anything left after that
+// is the slot title.
+const TITLE_NOISE_RE = /\b(schedule[ds]?|block\s+out|from|to|until|at)\b/gi;
+
+/**
+ * Pull {start, end, title} out of the raw user text. Two times in order are
+ * start/end; a token without a meridiem inherits one from a sibling token
+ * ("6-7am" → 06:00/07:00, "9pm to midnight" → 21:00/00:00). Missing keys are
+ * omitted; title falls back to "Scheduled block".
+ */
+export function parseScheduleFieldsFromUserText(text) {
+  const raw = String(text || "");
+  const tokens = [];
+  const re = new RegExp(TIME_TOKEN_GLOBAL_RE.source, "gi");
+  let m;
+  while ((m = re.exec(raw)) !== null) tokens.push({ raw: m[0], index: m.index });
+
+  // Meridiem inheritance: "6-7am" gives the bare "6" the "am" from "7am".
+  // Colon tokens (already 24-hour) and midnight/noon never inherit.
+  const meridiem = tokens
+    .map((t) => /(am|pm)\b/i.exec(t.raw))
+    .find(Boolean)?.[1]?.toLowerCase() || null;
+  const parsed = [];
+  for (const t of tokens) {
+    let token = t.raw;
+    if (meridiem && !/(am|pm)\b/i.test(token) && !/:/.test(token) && !/^(midnight|noon)$/i.test(token.trim())) {
+      token = `${token.trim()}${meridiem}`;
+    }
+    const time = parseFlexibleTime(token);
+    if (time) parsed.push(time);
+  }
+
+  const out = {};
+  if (parsed.length >= 1) out.start = parsed[0];
+  if (parsed.length >= 2) out.end = parsed[1];
+
+  // Title: the words left after cutting the time spans, [sandbox], "HQ Today:",
+  // and the scheduling verbs.
+  let title = "";
+  let cursor = 0;
+  for (const t of tokens) {
+    title += raw.slice(cursor, t.index);
+    cursor = t.index + t.raw.length;
+  }
+  title += raw.slice(cursor);
+  title = title
+    .replace(/\[sandbox\]/gi, " ")
+    .replace(/HQ Today:/gi, " ")
+    .replace(TITLE_NOISE_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  out.title = title || "Scheduled block";
+  return out;
+}
+
+/**
+ * True for cron/job/recurring scheduling intent — NOT a one-window timed
+ * block. "schedule a gaming session 9 pm to midnight" is false.
+ */
+export function isCronLikeScheduleIntent(text) {
+  return /\b(crontab?|recurring|recurs|hourly|every\s+\d+\s*(?:min|mins|minute|minutes|hour|hours)|every\s+(?:hour|minute|day|week|morning|evening|night)|remind\s+me\s+in)\b/i.test(String(text || ""))
+    || /\bschedule\s+a\s+(?:cron|job)\b/i.test(String(text || ""));
+}
+
+/**
+ * True when the user is asking for ONE timed window on the daily plan:
+ * two parseable times + a schedule verb, not cron-like, not a gcal request.
+ */
+export function isScheduleSlotIntent(text) {
+  const raw = String(text || "");
+  if (!raw.trim()) return false;
+  if (/\b(gcal|google\s+calendar)\b/i.test(raw)) return false;
+  if (isCronLikeScheduleIntent(raw)) return false;
+  const hasVerb = /\b(schedule[ds]?|block\s+out|time[-\s]?block)\b/i.test(raw)
+    || /\bput\b[^.]{0,80}?\bfrom\b/i.test(raw);
+  if (!hasVerb) return false;
+  const fields = parseScheduleFieldsFromUserText(raw);
+  return Boolean(fields.start && fields.end);
+}
+
+/**
+ * When the model answered a one-window schedule request with NO tool call,
+ * synthesise the cos_schedule_block call the user asked for. Returns null
+ * unless the message is a schedule-slot intent with both times parseable.
+ */
+export function buildForcedScheduleToolCall(userMessage) {
+  if (!isScheduleSlotIntent(userMessage)) return null;
+  const fields = parseScheduleFieldsFromUserText(userMessage);
+  if (!fields.start || !fields.end) return null;
+  return {
+    name: "cos_schedule_block",
+    arguments: { start: fields.start, end: fields.end, title: fields.title || "Scheduled block" }
+  };
+}
 
 // ── Pure time helpers ────────────────────────────────────────────────────────
 
@@ -148,6 +286,21 @@ async function getChildBlocks(deps, uid) {
     }))
     .sort((a, b) => a.order - b.order);
 }
+/** Pull a minimal entity shape; pages expose :node/title. Null when absent. */
+async function pullEntity(deps, uid) {
+  const api = deps.getRoamAlphaApi();
+  try {
+    if (typeof api?.data?.pull === "function") return await api.data.pull(ENTITY_PULL_PATTERN, [":block/uid", uid]);
+    if (typeof api?.pull === "function") return await api.pull(ENTITY_PULL_PATTERN, [":block/uid", uid]);
+  } catch (err) {
+    deps.debugLog?.("[cos_schedule_block] entity pull failed for", uid, err?.message);
+  }
+  return null;
+}
+
+function isPageEntity(entity) {
+  return Boolean(entity && entity[":node/title"] != null);
+}
 
 /**
  * Find the schedule parent among a daily page's top-level children, creating
@@ -204,6 +357,24 @@ export async function findExistingOpenTodo(deps, title) {
   }
   return null;
 }
+/**
+ * Resolve a configured schedule parent (setting value or explicit uid):
+ * an existing block uid is used as-is; a page uid or a page title resolves
+ * through findScheduleParent so slots land under its Nautilus/Schedule
+ * heading, never as raw page children. Returns null for empty input.
+ */
+export async function resolveConfiguredScheduleParent(deps, raw, heading) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const entity = await pullEntity(deps, value);
+  if (entity) {
+    if (isPageEntity(entity)) return findScheduleParent(deps, value, heading);
+    return { uid: value, created: false };
+  }
+  const pageUid = await deps.ensurePageUidByTitle(value);
+  if (!pageUid) throw new Error(`Could not resolve schedule parent page "${value}".`);
+  return findScheduleParent(deps, pageUid, heading);
+}
 
 // ── The tool ─────────────────────────────────────────────────────────────────
 
@@ -248,8 +419,14 @@ export function buildScheduleBlockTool(deps) {
       required: ["start", "end", "title"]
     },
     execute: async (args = {}) => {
-      const startNorm = normalizeTime(args.start);
-      const endNorm = normalizeTime(args.end);
+      // User-text clocks: the user's own times overwrite the model's start/end
+      // whenever they parse (models mis-convert "9pm" too often to trust).
+      // Title is NEVER touched here — only start/end.
+      const fromUser = parseScheduleFieldsFromUserText(deps.getAgentUserMessage?.());
+      const startRaw = fromUser.start || args.start;
+      const endRaw = fromUser.end || args.end;
+      const startNorm = normalizeTime(startRaw);
+      const endNorm = normalizeTime(endRaw);
       const title = String(args.title || "").trim();
       if (!startNorm) throw new Error("start is required (HH:MM, 24-hour).");
       if (!endNorm) throw new Error("end is required (HH:MM, 24-hour; 24:00 allowed for midnight).");
@@ -259,18 +436,38 @@ export function buildScheduleBlockTool(deps) {
       const prefix = formatSlotPrefix(startNorm, endNorm);
       const api = deps.getRoamAlphaApi();
 
-      // 1. Resolve the schedule parent.
-      let parentUid = String(args.parent_uid || "").trim();
+      // 1. Resolve the schedule parent. Order: [sandbox] user-text pin
+      //    (executor-side, ignores model-supplied date/parent_uid) → explicit
+      //    parent_uid → schedule-parent setting → daily page discovery.
+      let parentUid = "";
       let createdParent = false;
       let dailyPage = null;
-      if (parentUid) {
-        deps.requireRoamUidExists(parentUid, "parent_uid");
-      } else {
-        dailyPage = await resolveDailyPage(args.date);
-        if (!dailyPage?.pageUid) throw new Error("Could not resolve the daily page.");
-        const parent = await findScheduleParent(deps, dailyPage.pageUid, args.schedule_heading);
+      if (isSandboxUserMessage(deps.getAgentUserMessage?.())) {
+        const sandboxTitle = deps.getSettingString?.("schedule-sandbox-page", DEFAULT_SANDBOX_PAGE) || DEFAULT_SANDBOX_PAGE;
+        const pageUid = await deps.ensurePageUidByTitle(sandboxTitle);
+        dailyPage = { pageUid, pageTitle: sandboxTitle };
+        const parent = await findScheduleParent(deps, pageUid, args.schedule_heading);
         parentUid = parent.uid;
         createdParent = parent.created;
+      } else if (String(args.parent_uid || "").trim()) {
+        const explicit = String(args.parent_uid).trim();
+        deps.requireRoamUidExists(explicit, "parent_uid");
+        const parent = await resolveConfiguredScheduleParent(deps, explicit, args.schedule_heading);
+        parentUid = parent.uid;
+        createdParent = parent.created;
+      } else {
+        const configured = String(deps.getSettingString?.("schedule-parent", "") || "").trim();
+        if (configured) {
+          const parent = await resolveConfiguredScheduleParent(deps, configured, args.schedule_heading);
+          parentUid = parent.uid;
+          createdParent = parent.created;
+        } else {
+          dailyPage = await resolveDailyPage(args.date);
+          if (!dailyPage?.pageUid) throw new Error("Could not resolve the daily page.");
+          const parent = await findScheduleParent(deps, dailyPage.pageUid, args.schedule_heading);
+          parentUid = parent.uid;
+          createdParent = parent.created;
+        }
       }
 
       // 2. Resolve the task uid WITHOUT creating anything yet — a collision

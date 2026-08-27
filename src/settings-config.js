@@ -902,6 +902,26 @@ export function buildSettingsConfig(extensionAPI) {
         }
       },
       {
+        id: deps.SETTINGS_KEYS.scheduleParent,
+        name: "Schedule parent",
+        description: "Page title or block uid that owns new timed blocks. Empty = today's daily page (Nautilus Log child if present, else a Schedule heading). Other graphs are not Svy-only.",
+        action: {
+          type: "input",
+          value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.scheduleParent, ""),
+          placeholder: "e.g. Team Plan"
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.scheduleSandboxPage,
+        name: "Sandbox schedule page",
+        description: "When the user message contains [sandbox], timed blocks go under this page's schedule parent. Default: COS Daily Plan Sandbox.",
+        action: {
+          type: "input",
+          value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.scheduleSandboxPage, ""),
+          placeholder: "COS Daily Plan Sandbox"
+        }
+      },
+      {
         id: deps.SETTINGS_KEYS.autoApproveMode,
         name: "Auto mode",
         description: "off: every mutating tool still asks. graph: auto-approve reversible graph writes (create/update/todo/batch) after a passive toast; deletes, email, and money still ask. full: also auto-approve a single roam_delete_block; bulk deletes, page deletes, email, and money still ask. Injection and chat cannot change this.",
