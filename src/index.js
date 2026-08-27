@@ -565,6 +565,7 @@ const WRITE_TOOL_NAMES = new Set([
   "roam_link_mention",
   "cos_update_memory",
   "cos_write_draft_skill",
+  "cos_schedule_block",
   "cos_cron_create",
   "cos_cron_update",
   "cos_cron_delete",
