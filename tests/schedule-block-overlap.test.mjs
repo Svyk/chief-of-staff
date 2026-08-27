@@ -130,7 +130,13 @@ test("isOverlapScheduleIntent true/false table", () => {
 
   const falseCases = [
     "during the day",
+    "during the week",
+    "during the month",
+    "during the year",
     "during the morning",
+    "during the afternoon",
+    "during the evening",
+    "during the night",
     "that's ok",
     "schedule a cron every 5 min",
     "schedule gaming 9pm to midnight",
@@ -381,6 +387,23 @@ test("align_with copies times when user text has no clocks", async () => {
 
   assert.equal(result.success, true);
   assert.match(result.slot_string, /^19:00 - 21:00/);
+});
+
+test("user-text clocks beat align_with when both are set", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const { parentUid } = setupParent(g);
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) movie night #Event`);
+  g.deps.getAgentUserMessage = () => "schedule laundry 20:00-21:00";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00",
+    title: "Laundry", align_with: "movie night", collide: "allow",
+  });
+
+  assert.equal(result.success, true);
+  assert.match(result.slot_string, /^20:00 - 21:00/);
 });
 
 test("title is never replaced by the anchor", async () => {
