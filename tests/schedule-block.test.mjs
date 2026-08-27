@@ -14,6 +14,8 @@ import {
   isCronLikeScheduleIntent,
   isScheduleSlotIntent,
   buildForcedScheduleToolCall,
+  clearLastScheduleCollision,
+  getLastScheduleCollision,
   COS_SCHEDULE_BLOCK_BUILD,
 } from "../src/schedule-block.js";
 
@@ -118,6 +120,7 @@ function makeFakeGraph() {
     },
     truncateRoamBlockText: (t) => String(t || ""),
     debugLog: () => {},
+    getSettingBool: (key, fallback) => fallback,
   };
 
   const todoCount = () =>
@@ -480,8 +483,8 @@ test("resolveConfiguredScheduleParent returns null for empty input", async () =>
 });
 // ── User-text clocks ─────────────────────────────────────────────────────────
 
-test("build stamp bumped for the fence build", () => {
-  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260826-caret");
+test("build stamp bumped for the overlap build", () => {
+  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260827-overlap");
 });
 
 test("parseFlexibleTime covers the full token table", () => {
@@ -540,6 +543,20 @@ test("parseScheduleFieldsFromUserText: title strips verbs, [sandbox], HQ Today:"
   assert.equal(empty.title, "Scheduled block");
 });
 
+test("parseScheduleFieldsFromUserText: duration numbers are not clocks", () => {
+  const twoHour = parseScheduleFieldsFromUserText("schedule a 2 hour session 9pm to 11pm");
+  assert.equal(twoHour.start, "21:00");
+  assert.equal(twoHour.end, "23:00");
+
+  const thirtyMin = parseScheduleFieldsFromUserText("schedule a 30 min break 3pm to 4pm");
+  assert.equal(thirtyMin.start, "15:00");
+  assert.equal(thirtyMin.end, "16:00");
+
+  const trailing = parseScheduleFieldsFromUserText("schedule deep work 9pm to 11pm for 2 hours");
+  assert.equal(trailing.start, "21:00");
+  assert.equal(trailing.end, "23:00");
+});
+
 test("isCronLikeScheduleIntent: cron/job/recurring true, one-window false", () => {
   assert.equal(isCronLikeScheduleIntent("schedule a cron every 5 min"), true);
   assert.equal(isCronLikeScheduleIntent("set up a recurring reminder"), true);
@@ -577,6 +594,79 @@ test("buildForcedScheduleToolCall: builds cos_schedule_block from user times", (
   assert.equal(buildForcedScheduleToolCall("what's on my calendar"), null);
   assert.equal(buildForcedScheduleToolCall("schedule a cron every 5 min"), null);
   assert.equal(buildForcedScheduleToolCall("schedule something tomorrow"), null);
+});
+
+test("buildForcedScheduleToolCall: overlap follow-up uses last refused window", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  assert.equal(refused.success, false);
+
+  const call = buildForcedScheduleToolCall("overlap");
+  assert.deepEqual(call, {
+    name: "cos_schedule_block",
+    arguments: { start: "19:00", end: "21:00", title: "Laundry", collide: "allow" },
+  });
+});
+
+test("buildForcedScheduleToolCall: overlap is null when last collision cleared", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  clearLastScheduleCollision();
+  assert.equal(buildForcedScheduleToolCall("overlap"), null);
+});
+
+test("buildForcedScheduleToolCall: timed-slot intent beats last collision", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+
+  const call = buildForcedScheduleToolCall("schedule gaming 9pm to midnight");
+  assert.deepEqual(call, {
+    name: "cos_schedule_block",
+    arguments: { start: "21:00", end: "00:00", title: "gaming" },
+  });
+});
+
+test("buildForcedScheduleToolCall: stale last collision returns null for overlap", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  getLastScheduleCollision().at = Date.now() - (5 * 60 * 1000 + 1000);
+  assert.equal(buildForcedScheduleToolCall("overlap"), null);
 });
 
 test("user-text clocks overwrite model start/end under [sandbox]", async () => {
