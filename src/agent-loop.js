@@ -757,7 +757,7 @@ export async function runAgentLoop(userMessage, options = {}) {
       // no tool call at all — inject the cos_schedule_block call the user
       // asked for (built from THEIR times, not the model's prose). Downstream
       // guards then see a real tool call; no empty-response nudge is sent.
-      if (toolCalls.length === 0) {
+      if (toolCalls.length === 0 && !readOnlyTools && !planMode) {
         const forced = buildForcedScheduleToolCall(userMessage);
         if (forced) {
           toolCalls = [forced];
