@@ -18,7 +18,7 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260826-fence";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260826-caret";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
 const ENTITY_PULL_PATTERN = "[:block/uid :node/title]";
