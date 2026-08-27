@@ -17,6 +17,8 @@ import {
   clearLastScheduleCollision,
   getLastScheduleCollision,
   COS_SCHEDULE_BLOCK_BUILD,
+  parseDatePinFromUserText,
+  isNoNewScheduleTitle,
 } from "../src/schedule-block.js";
 
 const NAUTILUS_STRING = "{{roam/render: ((roam-render-Nautilus-Log-cljs))}}";
@@ -263,6 +265,7 @@ test("collision with a different task refuses and overwrites nothing", async () 
   assert.equal(result.colliding_uid, existingSlot);
   assert.equal(result.colliding_string, before);
   assert.match(result.error, /collision/i);
+  assert.ok(!/\bmove\b/i.test(result.error), "collision copy must not mention move");
   assert.equal(g.blocks.get(existingSlot).string, before, "existing slot must be untouched");
   assert.equal(g.childrenOf(parentUid).length, childCountBefore, "no slot may be written");
   assert.equal(g.todoCount(), 1, "no orphan TODO on refusal");
@@ -483,8 +486,8 @@ test("resolveConfiguredScheduleParent returns null for empty input", async () =>
 });
 // ── User-text clocks ─────────────────────────────────────────────────────────
 
-test("build stamp bumped for the overlap build", () => {
-  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260827-overlap");
+test("build stamp bumped for the timed-block build", () => {
+  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260827-timedblock");
 });
 
 test("parseFlexibleTime covers the full token table", () => {
@@ -540,7 +543,47 @@ test("parseScheduleFieldsFromUserText: title strips verbs, [sandbox], HQ Today:"
   assert.ok(f.title.includes("league of legends"));
 
   const empty = parseScheduleFieldsFromUserText("schedule 9pm to 10pm");
-  assert.equal(empty.title, "Scheduled block");
+  assert.equal(empty.title, "Timed block");
+});
+
+test("isNoNewScheduleTitle accepts both Timed block and legacy Scheduled block", () => {
+  assert.equal(isNoNewScheduleTitle("Timed block"), true);
+  assert.equal(isNoNewScheduleTitle("Scheduled block"), true);
+  assert.equal(isNoNewScheduleTitle("gaming"), false);
+});
+
+test("parseScheduleFieldsFromUserText: bare hours after from/to/until are clocks", () => {
+  const f = parseScheduleFieldsFromUserText("schedule gaming from 9 to 10pm");
+  assert.equal(f.start, "21:00");
+  assert.equal(f.end, "22:00");
+  assert.ok(f.title.includes("gaming"));
+});
+
+test("parseScheduleFieldsFromUserText: start plus duration derives end", () => {
+  const iso = parseScheduleFieldsFromUserText("block out 2 hours from 21:00 for gaming");
+  assert.equal(iso.start, "21:00");
+  assert.equal(iso.end, "23:00");
+  assert.ok(iso.title.includes("gaming"));
+
+  const pm = parseScheduleFieldsFromUserText("block out 2 hours from 9pm for gaming");
+  assert.equal(pm.start, "21:00");
+  assert.equal(pm.end, "23:00");
+  assert.ok(pm.title.includes("gaming"));
+});
+
+test("execute: start plus duration writes correct slot line", async () => {
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  g.insertBlock(pageUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () => "block out 2 hours from 21:00 for gaming";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: "August 27th, 2026", start: "09:00", end: "12:00", title: "Gaming",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.slot_string, `21:00 - 23:00 (**120'**) ((${result.task_uid}))`);
 });
 
 test("parseScheduleFieldsFromUserText: duration numbers are not clocks", () => {
@@ -574,10 +617,15 @@ test("isScheduleSlotIntent: two times + verb, not cron-like, not calendar reads"
   assert.equal(isScheduleSlotIntent("block out focus 6-7am"), true);
   assert.equal(isScheduleSlotIntent("put gym from 18:00 to 19:00"), true);
   assert.equal(isScheduleSlotIntent("time-block reading 20:00-21:00"), true);
+  assert.equal(isScheduleSlotIntent("add laundry 19:00-21:00"), true);
+  assert.equal(isScheduleSlotIntent("book a call 15:00-16:00"), true);
+  assert.equal(isScheduleSlotIntent("timebox reading 20:00-21:00"), true);
+  assert.equal(isScheduleSlotIntent("block out 2 hours from 9pm for gaming"), true);
   assert.equal(isScheduleSlotIntent("schedule a cron every 5 min"), false);
   assert.equal(isScheduleSlotIntent("what's on my calendar"), false);
   assert.equal(isScheduleSlotIntent("schedule something tomorrow"), false);
   assert.equal(isScheduleSlotIntent("add this to my google calendar 9-10"), false);
+  assert.equal(isScheduleSlotIntent("plan my week"), false);
   assert.equal(isScheduleSlotIntent(""), false);
 });
 
@@ -589,7 +637,7 @@ test("buildForcedScheduleToolCall: builds cos_schedule_block from user times", (
   });
 
   const fallback = buildForcedScheduleToolCall("schedule 9pm to 10pm");
-  assert.equal(fallback.arguments.title, "Scheduled block");
+  assert.equal(fallback.arguments.title, "Timed block");
 
   assert.equal(buildForcedScheduleToolCall("what's on my calendar"), null);
   assert.equal(buildForcedScheduleToolCall("schedule a cron every 5 min"), null);
@@ -716,4 +764,60 @@ test("model title is kept; only start/end are overwritten", async () => {
 
   assert.equal(result.success, true);
   assert.equal(g.blocks.get(result.task_uid).string, "{{[[TODO]]}} Model Title Stays");
+});
+
+test("parseDatePinFromUserText pins today, tonight, and tomorrow", () => {
+  const now = new Date(2026, 7, 27, 9, 0, 0);
+  const tomorrow = parseDatePinFromUserText("schedule gaming tomorrow 9pm", now);
+  assert.equal(tomorrow.getFullYear(), 2026);
+  assert.equal(tomorrow.getMonth(), 7);
+  assert.equal(tomorrow.getDate(), 28);
+  assert.equal(tomorrow.getHours(), 12);
+
+  const today = parseDatePinFromUserText("schedule tonight 9pm", now);
+  assert.equal(today.getDate(), 27);
+
+  assert.equal(parseDatePinFromUserText("schedule gaming 9pm to 10pm", now), null);
+});
+
+test("tomorrow in user text pins the daily page even when model passes today", async () => {
+  const g = makeFakeGraph();
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const todayTitle = fmtRoamDate(today);
+  const tomorrowTitle = fmtRoamDate(tomorrow);
+  const todayUid = g.addPage(todayTitle);
+  g.insertBlock(todayUid, NAUTILUS_STRING);
+  const tomorrowUid = g.addPage(tomorrowTitle);
+  const tomorrowNautilus = g.insertBlock(tomorrowUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () => "schedule gaming tomorrow 9pm to 10pm";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: todayTitle, start: "21:00", end: "22:00", title: "Gaming",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, tomorrowNautilus);
+  assert.equal(g.blocks.get(result.slot_uid).parent, tomorrowNautilus);
+});
+
+test("[sandbox] still pins sandbox over tomorrow date pin", async () => {
+  const g = makeFakeGraph();
+  const todayTitle = fmtRoamDate(new Date());
+  const todayUid = g.addPage(todayTitle);
+  const todayNautilus = g.insertBlock(todayUid, NAUTILUS_STRING);
+  const sandboxUid = g.addPage("COS Daily Plan Sandbox");
+  const sandboxNautilus = g.insertBlock(sandboxUid, NAUTILUS_STRING);
+  g.deps.getAgentUserMessage = () => "schedule gaming tomorrow 9pm to 10pm [sandbox]";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({
+    date: todayTitle, start: "21:00", end: "22:00", title: "Gaming",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parent_uid, sandboxNautilus);
+  assert.equal(g.childrenOf(todayNautilus).length, 0);
 });

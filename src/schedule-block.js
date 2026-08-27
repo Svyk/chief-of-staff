@@ -16,7 +16,7 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260827-overlap";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260827-timedblock";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
 const ENTITY_PULL_PATTERN = "[:block/uid :node/title]";
@@ -64,14 +64,16 @@ export function parseFlexibleTime(token) {
 }
 
 // Title filler stripped along with the time tokens. Anything left after that
-// is the slot title.
-const TITLE_NOISE_RE = /\b(schedule[ds]?|block\s+out|from|to|until|at)\b/gi;
+// is the slot title. book/plan are intentionally omitted (would mangle "book club").
+const TITLE_NOISE_RE = /\b(schedule[ds]?|block\s+out|carve\s+out|set\s+aside|slot\s+in|timebox|add|put|place|drop|from|to|until|at)\b/gi;
+
+const DURATION_RE = /\b(\d+)\s*(hours?|hrs?|mins?|minutes?)\b/i;
 
 /**
  * Pull {start, end, title} out of the raw user text. Two times in order are
  * start/end; a token without a meridiem inherits one from a sibling token
  * ("6-7am" → 06:00/07:00, "9pm to midnight" → 21:00/00:00). Missing keys are
- * omitted; title falls back to "Scheduled block".
+ * omitted; title falls back to "Timed block".
  */
 function isBareHourToken(raw) {
   return /^\d{1,2}$/.test(String(raw || "").trim());
@@ -91,6 +93,31 @@ function isDurationNumber(text, index, length) {
   return /^\s*-?\s*(?:hours?|hrs?|mins?|minutes?)\b/i.test(after);
 }
 
+function isFromToUntilAdjacentTime(text, index, length) {
+  const before = text.slice(0, index);
+  if (/\b(?:from|to|until)\s*$/i.test(before)) return true;
+  const after = text.slice(index + length);
+  return /^\s*(?:to|until)\b/i.test(after);
+}
+
+function parseDurationMinutes(text) {
+  const m = DURATION_RE.exec(String(text || ""));
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  if (/^min/.test(unit)) return n;
+  return n * 60;
+}
+
+function addMinutesToTime(time, minutes) {
+  const total = toMinutes(time);
+  if (total == null) return null;
+  const wrapped = (total + minutes) % 1440;
+  const h = Math.floor(wrapped / 60);
+  const m = wrapped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 export function parseScheduleFieldsFromUserText(text) {
   const raw = String(text || "");
   const tokens = [];
@@ -102,7 +129,8 @@ export function parseScheduleFieldsFromUserText(text) {
     const trimmed = t.raw.trim();
     if (!isBareHourToken(trimmed)) return true;
     if (isDurationNumber(raw, t.index, t.raw.length)) return false;
-    return isDashAdjacentTime(raw, t.index, t.raw.length);
+    return isDashAdjacentTime(raw, t.index, t.raw.length)
+      || isFromToUntilAdjacentTime(raw, t.index, t.raw.length);
   });
 
   // Meridiem inheritance: "6-7am" gives the bare "6" the "am" from "7am".
@@ -123,6 +151,10 @@ export function parseScheduleFieldsFromUserText(text) {
   const out = {};
   if (parsed.length >= 1) out.start = parsed[0];
   if (parsed.length >= 2) out.end = parsed[1];
+  if (parsed.length === 1 && !out.end) {
+    const durMins = parseDurationMinutes(raw);
+    if (durMins != null) out.end = addMinutesToTime(parsed[0], durMins);
+  }
 
   // Title: the words left after cutting the time spans, [sandbox], and
   // skill-name prefixes such as "HQ Today:" (a graph-local skill label, not
@@ -141,8 +173,34 @@ export function parseScheduleFieldsFromUserText(text) {
     .replace(TITLE_NOISE_RE, " ")
     .replace(/\s+/g, " ")
     .trim();
-  out.title = title || "Scheduled block";
+  out.title = title || "Timed block";
   return out;
+}
+
+/**
+ * Pin the daily page from today/tonight/tomorrow in user text, or null.
+ */
+export function parseDatePinFromUserText(text, now = new Date()) {
+  const raw = String(text || "");
+  if (/\btomorrow\b/i.test(raw)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(12, 0, 0, 0);
+    return d;
+  }
+  if (/\b(?:today|tonight)\b/i.test(raw)) {
+    const d = new Date(now);
+    d.setHours(12, 0, 0, 0);
+    return d;
+  }
+  return null;
+}
+
+function fmtIsoDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 /**
@@ -252,9 +310,9 @@ function isLastScheduleCollisionFresh(last = lastScheduleCollision) {
   return Date.now() - last.at <= LAST_SCHEDULE_COLLISION_TTL_MS;
 }
 
-function isNoNewScheduleTitle(title) {
+export function isNoNewScheduleTitle(title) {
   const t = String(title || "").trim();
-  if (!t || t === "Scheduled block") return true;
+  if (!t || t === "Timed block" || t === "Scheduled block") return true;
   const stripped = t.replace(OVERLAP_TITLE_NOISE_RE, " ").replace(/\s+/g, " ").trim();
   return !stripped;
 }
@@ -314,7 +372,7 @@ export function isScheduleSlotIntent(text) {
   if (!raw.trim()) return false;
   if (/\b(gcal|google\s+calendar)\b/i.test(raw)) return false;
   if (isCronLikeScheduleIntent(raw)) return false;
-  const hasVerb = /\b(schedule[ds]?|block\s+out|time[-\s]?block)\b/i.test(raw)
+  const hasVerb = /\b(schedule[ds]?|block\s+out|time[-\s]?block|plan|book|reserve|carve\s+out|set\s+aside|slot\s+in|timebox|add|put|place|drop)\b/i.test(raw)
     || /\bput\b[^.]{0,80}?\bfrom\b/i.test(raw);
   if (!hasVerb) return false;
   const fields = parseScheduleFieldsFromUserText(raw);
@@ -333,7 +391,7 @@ export function buildForcedScheduleToolCall(userMessage) {
     if (!fields.start || !fields.end) return null;
     return {
       name: "cos_schedule_block",
-      arguments: { start: fields.start, end: fields.end, title: fields.title || "Scheduled block" },
+      arguments: { start: fields.start, end: fields.end, title: fields.title || "Timed block" },
     };
   }
   if (isShortOverlapConfirmation(raw) && isLastScheduleCollisionFresh()) {
@@ -344,7 +402,7 @@ export function buildForcedScheduleToolCall(userMessage) {
         arguments: {
           start: last.start,
           end: last.end,
-          title: last.title || "Scheduled block",
+          title: last.title || "Timed block",
           collide: "allow",
         },
       };
@@ -594,7 +652,7 @@ export function buildScheduleBlockTool(deps) {
   return {
     name: "cos_schedule_block",
     isMutating: true,
-    description: "Place a timed block on a daily page. Writes the canonical slot grammar HH:MM - HH:MM (**N'**) ((task-uid)) as a child of the schedule parent (an existing Nautilus Log block, a #TimeBlock/Schedule heading, or a new \"Schedule\" heading it creates). Reuses an existing open TODO when task_uid is omitted; kind=event writes plain text tagged #Event instead. Inserts chronologically, keeps SmartBlock buttons last. Refuses overlapping slots by default; pass collide=allow or use align_with when the user wants the new block at the same time as an existing one (overlap language in the user message is also detected). One call places exactly one slot.",
+    description: "Place a timed block on a daily page. Writes the canonical slot grammar HH:MM - HH:MM (**N'**) ((task-uid)) as a child of the timed block parent (an existing Nautilus Log block, a #TimeBlock/Schedule heading, or a new \"Schedule\" heading it creates). Reuses an existing open TODO when task_uid is omitted; kind=event writes plain text tagged #Event instead. Inserts chronologically, keeps SmartBlock buttons last. Refuses overlapping slots by default; pass collide=allow or use align_with when the user wants the new block at the same time as an existing one (overlap language in the user message is also detected). One call places exactly one slot.",
     input_schema: {
       type: "object",
       properties: {
@@ -646,7 +704,10 @@ export function buildScheduleBlockTool(deps) {
           parentUid = parent.uid;
           createdParent = parent.created;
         } else {
-          dailyPage = await resolveDailyPage(args.date);
+          let dateArg = args.date;
+          const datePin = parseDatePinFromUserText(userMessage);
+          if (datePin) dateArg = fmtIsoDate(datePin);
+          dailyPage = await resolveDailyPage(dateArg);
           if (!dailyPage?.pageUid) throw new Error("Could not resolve the daily page.");
           const parent = await findScheduleParent(deps, dailyPage.pageUid, args.schedule_heading);
           parentUid = parent.uid;
@@ -756,7 +817,7 @@ export function buildScheduleBlockTool(deps) {
           at: Date.now(),
         };
         const suffix = collide === "ask"
-          ? " Ask the user: overlap to keep both, move to shift the existing slot, or pick a different time."
+          ? " Ask the user: overlap to keep both, or pick a different time."
           : " Say overlap or same time to keep both, or pick a different window.";
         return {
           success: false,

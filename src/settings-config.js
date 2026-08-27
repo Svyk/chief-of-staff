@@ -903,7 +903,7 @@ export function buildSettingsConfig(extensionAPI) {
       },
       {
         id: deps.SETTINGS_KEYS.scheduleParent,
-        name: "Schedule parent",
+        name: "Timed block parent",
         description: "Page title or block uid that owns new timed blocks. Empty = today's daily page (Nautilus Log child if present, else a Schedule heading). Any graph.",
         action: {
           type: "input",
@@ -913,8 +913,8 @@ export function buildSettingsConfig(extensionAPI) {
       },
       {
         id: deps.SETTINGS_KEYS.scheduleSandboxPage,
-        name: "Sandbox schedule page",
-        description: "When the user message contains [sandbox], timed blocks go under this page's schedule parent. Default: COS Daily Plan Sandbox.",
+        name: "Timed block sandbox page",
+        description: "When the user message contains [sandbox], timed blocks go under this page's timed block parent. Default: COS Daily Plan Sandbox.",
         action: {
           type: "input",
           value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.scheduleSandboxPage, ""),
