@@ -33,8 +33,11 @@ function detectPromptSections(userMessage) {
     sections.add("toolkit_GMAIL");
   }
 
-  // Calendar (including common typos)
-  if (/\b(cal[ea]n[dn]a?[rt]|schedule|event|meeting|appointment|agenda|gcal)\b/.test(text)) {
+  // Calendar (including common typos). Do not treat the verb "schedule"
+  // alone as Google Calendar — "schedule a gaming session 9pm" is a Roam
+  // timed block (cos_schedule_block), not a GCal event.
+  if (/\b(cal[ea]n[dn]a?[rt]|gcal|google calendar)\b/.test(text) ||
+      (/\b(event|meeting|appointment|agenda)\b/.test(text) && /\b(calendar|gcal|google)\b/.test(text))) {
     sections.add("composio");
     sections.add("toolkit_GOOGLECALENDAR");
   }
@@ -82,8 +85,8 @@ function detectPromptSections(userMessage) {
     sections.add("skills");
   }
 
-  // Cron / scheduled jobs
-  if (/\b(cron|schedule[ds]?|recurring|every\s+\d+\s+(min|hour)|hourly|timer|remind\s+me\s+in)\b/.test(text)) {
+  // Cron / scheduled jobs — not the verb "schedule X from A to B"
+  if (/\b(cron|scheduled jobs?|recurring|every\s+\d+\s+(min|hour)|hourly|timer|remind\s+me\s+in)\b/.test(text)) {
     sections.add("cron");
   }
 
@@ -400,6 +403,7 @@ For Roam:
 - Use roam_get_block_context to understand where a block sits — returns the block, its parent chain up to the page, and its siblings
 - Use roam_delete_block to delete blocks or Better Tasks by UID. The BT search results include the task UID — use that UID directly for deletion.
 - Additional Roam tools (todos, formatting, embeds, sidebar, navigation, history, page shortcuts) are available via ROAM_ROUTE — call it to discover tools, then use ROAM_EXECUTE.
+- Timed block on a daily page ("schedule X from A to B", "9pm to midnight"): call cos_schedule_block with 24-hour start/end and a title. It writes \`HH:MM - HH:MM (**N'**) ((todo-uid))\` under the schedule parent (an existing Nautilus Log block if present, otherwise a Schedule heading). Do not hand-write that grammar with roam_create_block — create parses markdown and mangles ((uid)). One new window = one cos_schedule_block call. A full-day rewrite still follows the Daily Plan skill.
 
 Summarise results clearly for the user.
 
