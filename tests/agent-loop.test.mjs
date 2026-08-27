@@ -420,10 +420,12 @@ describe("shouldShortCircuitAfterCollision", () => {
 });
 
 describe("collisionShortCircuitMessage", () => {
-  it("echoes colliding_string verbatim, no paraphrase", () => {
+  it("echoes colliding_string verbatim in a two-line message", () => {
+    const msg = collisionShortCircuitMessage({ colliding_string: "21:00 - 00:00 (**180'**) ((abc))" });
+    assert.ok(msg.includes("21:00 - 00:00 (**180'**) ((abc))"));
     assert.equal(
-      collisionShortCircuitMessage({ colliding_string: "21:00 - 00:00 (**180'**) ((abc))" }),
-      "Time collision: 21:00 - 00:00 (**180'**) ((abc))"
+      msg,
+      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap to keep both, move to shift the existing slot, or pick a different time."
     );
   });
 });
@@ -876,6 +878,36 @@ describe("shortCircuitMessage", () => {
     assert.equal(
       shortCircuitMessage({ name: "cos_cron_delete_jobs" }, { deleted: [{ name: "A" }], notFound: ["missing"] }),
       "Deleted 1 job(s): \"A\". Not found: missing."
+    );
+  });
+
+  it("cos_schedule_block success includes slot_string", () => {
+    assert.equal(
+      shortCircuitMessage(
+        { name: "cos_schedule_block" },
+        { slot_string: "19:00 - 21:00 (**120'**) ((todo1))" }
+      ),
+      "Scheduled: 19:00 - 21:00 (**120'**) ((todo1))"
+    );
+  });
+
+  it("cos_schedule_block overlapped success", () => {
+    assert.equal(
+      shortCircuitMessage(
+        { name: "cos_schedule_block" },
+        { slot_string: "19:00 - 21:00 (**120'**) ((todo2))", overlapped: true }
+      ),
+      "Scheduled alongside an existing block: 19:00 - 21:00 (**120'**) ((todo2))"
+    );
+  });
+
+  it("ROAM_EXECUTE inner cos_schedule_block success includes slot_string", () => {
+    assert.equal(
+      shortCircuitMessage(
+        { name: "ROAM_EXECUTE", arguments: { tool_name: "cos_schedule_block" } },
+        { slot_string: "14:00 - 15:00 (**60'**) ((todo3))" }
+      ),
+      "Scheduled: 14:00 - 15:00 (**60'**) ((todo3))"
     );
   });
 });

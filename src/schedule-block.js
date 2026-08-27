@@ -16,7 +16,7 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260826-caret";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260827-overlap";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
 const ENTITY_PULL_PATTERN = "[:block/uid :node/title]";
@@ -127,6 +127,129 @@ export function parseScheduleFieldsFromUserText(text) {
 export function isCronLikeScheduleIntent(text) {
   return /\b(crontab?|recurring|recurs|hourly|every\s+\d+\s*(?:min|mins|minute|minutes|hour|hours)|every\s+(?:hour|minute|day|week|morning|evening|night)|remind\s+me\s+in)\b/i.test(String(text || ""))
     || /\bschedule\s+a\s+(?:cron|job)\b/i.test(String(text || ""));
+}
+
+const DURING_EXCLUDE_RE = /\bduring\s+(?:the\s+)?(?:day|week|month|year|morning|afternoon|evening|night)\b/i;
+const ANCHOR_TRAIL_RE = /\s+(?:today|tonight|tomorrow|please|thanks)[.!?,]*$/i;
+
+/**
+ * True when the user is asking to place a block overlapping an existing one.
+ * Executor-side, like user-text clocks. Cron-like text and bare "that's ok" are false.
+ */
+export function isOverlapScheduleIntent(text) {
+  const raw = String(text || "");
+  if (!raw.trim()) return false;
+  if (isCronLikeScheduleIntent(raw)) return false;
+  if (/^that'?s\s+ok\.?$/i.test(raw.trim())) return false;
+  if (/\b(?:same\s+time|at\s+the\s+same\s+time|both\s+at\s+(?:the\s+)?same\s+time)\b/i.test(raw)) return true;
+  if (/\boverlapp?(?:ing)?(?:\s+with)?\b/i.test(raw)) return true;
+  if (/\b(?:in\s+parallel|alongside|concurrent(?:ly)?)\b/i.test(raw)) return true;
+  if (/\bdouble[-\s]?book\b/i.test(raw)) return true;
+  if (/\bwhile\s+(?:watching|doing|listening|eating|reading|working)\b/i.test(raw)) return true;
+  if (/\bduring\b/i.test(raw) && !DURING_EXCLUDE_RE.test(raw)) return true;
+  return false;
+}
+
+function cleanAnchorName(name) {
+  let s = String(name || "").trim();
+  s = s.replace(ANCHOR_TRAIL_RE, "").replace(/[.!?,]+$/, "").trim();
+  return s || null;
+}
+
+/**
+ * Pull the existing slot name from overlap phrasing, or null when none found.
+ */
+export function parseOverlapAnchor(text) {
+  const raw = String(text || "");
+  if (!raw.trim()) return null;
+  let m;
+  m = /\bsame\s+time\s+as\s+(?:we\s+are|we're|I\s+am|I'm)\s+(?:watching|doing|seeing|playing)\s+(.+)/i.exec(raw);
+  if (m) return cleanAnchorName(m[1]);
+  m = /\bsame\s+time\s+as\s+(?!we\s+are|we're|I\s+am|I'm\b)(.+)/i.exec(raw);
+  if (m) return cleanAnchorName(m[1]);
+  m = /\bduring\s+(?:the\s+)?(.+)/i.exec(raw);
+  if (m && !/^(?:day|week|month|year|morning|afternoon|evening|night)\b/i.test(m[1].trim())) {
+    return cleanAnchorName(m[1]);
+  }
+  m = /\bwhile\s+(?:watching|doing|listening(?:\s+to)?|eating|reading|working(?:\s+on)?)\s+(.+)/i.exec(raw);
+  if (m) return cleanAnchorName(m[1]);
+  m = /\balongside\s+(.+)/i.exec(raw);
+  if (m) return cleanAnchorName(m[1]);
+  m = /\boverlapp?(?:ing)?(?:\s+with)?\s+(.+)/i.exec(raw);
+  if (m) return cleanAnchorName(m[1]);
+  return null;
+}
+
+function significantWords(text) {
+  return String(text || "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length > 3);
+}
+
+function extraTextForUid(extraTexts, uid) {
+  if (!uid || extraTexts == null) return "";
+  if (extraTexts instanceof Map) return extraTexts.get(uid) || "";
+  if (Array.isArray(extraTexts)) {
+    const row = extraTexts.find((r) => r && r.uid === uid);
+    return row?.text || "";
+  }
+  if (typeof extraTexts === "object") return extraTexts[uid] || "";
+  return "";
+}
+
+/**
+ * Find the first schedule slot whose text (or linked TODO text) matches every
+ * significant word of the anchor. No fuzzy typo matching.
+ */
+export function findScheduleSlotByTitle(children, anchor, extraTexts) {
+  const words = significantWords(anchor);
+  if (!words.length) return null;
+  for (const child of Array.isArray(children) ? children : []) {
+    const slot = parseSlotLine(child.string);
+    if (!slot) continue;
+    const todoText = slot.refUid ? extraTextForUid(extraTexts, slot.refUid) : "";
+    const haystack = `${slot.text} ${todoText}`.toLowerCase();
+    if (words.every((w) => haystack.includes(w))) return { child, slot };
+  }
+  return null;
+}
+
+// ── Last refused window (follow-up "overlap") ────────────────────────────────
+
+let lastScheduleCollision = null;
+
+export function getLastScheduleCollision() {
+  return lastScheduleCollision;
+}
+
+export function clearLastScheduleCollision() {
+  lastScheduleCollision = null;
+}
+
+async function fetchOpenTodoTexts(deps) {
+  const map = new Map();
+  try {
+    const rows = await deps.queryRoamDatalog(`[:find ?uid ?str
+      :where
+      [?b :block/string ?str]
+      [?b :block/uid ?uid]
+      [(clojure.string/includes? ?str "{{[[TODO]]}}")]]`);
+    for (const [uid, str] of Array.isArray(rows) ? rows : []) {
+      map.set(uid, String(str || ""));
+    }
+  } catch (err) {
+    deps.debugLog?.("[cos_schedule_block] open-TODO scan failed:", err?.message);
+  }
+  return map;
+}
+
+function resolveCollidePolicy(deps, args, userMessage) {
+  if (isOverlapScheduleIntent(userMessage)) return "allow";
+  const explicit = String(args.collide || "").trim();
+  if (explicit === "refuse" || explicit === "ask" || explicit === "allow") return explicit;
+  if (deps.getSettingBool?.("schedule-allow-overlap", false)) return "allow";
+  return "refuse";
 }
 
 /**
@@ -401,7 +524,7 @@ export function buildScheduleBlockTool(deps) {
   return {
     name: "cos_schedule_block",
     isMutating: true,
-    description: "Place a timed block on a daily page. Writes the canonical slot grammar HH:MM - HH:MM (**N'**) ((task-uid)) as a child of the schedule parent (an existing Nautilus Log block, a #TimeBlock/Schedule heading, or a new \"Schedule\" heading it creates). Reuses an existing open TODO when task_uid is omitted; kind=event writes plain text tagged #Event instead. Inserts chronologically, keeps SmartBlock buttons last, and refuses on time collisions rather than overwriting. Does not flatten tables. One call places exactly one slot.",
+    description: "Place a timed block on a daily page. Writes the canonical slot grammar HH:MM - HH:MM (**N'**) ((task-uid)) as a child of the schedule parent (an existing Nautilus Log block, a #TimeBlock/Schedule heading, or a new \"Schedule\" heading it creates). Reuses an existing open TODO when task_uid is omitted; kind=event writes plain text tagged #Event instead. Inserts chronologically, keeps SmartBlock buttons last. Refuses overlapping slots by default; pass collide=allow or use align_with when the user wants the new block at the same time as an existing one (overlap language in the user message is also detected). One call places exactly one slot.",
     input_schema: {
       type: "object",
       properties: {
@@ -414,26 +537,18 @@ export function buildScheduleBlockTool(deps) {
         project: { type: "string", description: "Page title on which to create a NEW todo. Default: the daily page." },
         parent_uid: { type: "string", description: "Explicit schedule parent block uid (sandbox / tests). Skips parent discovery." },
         schedule_heading: { type: "string", description: "Heading used to find/create the schedule parent when there is no Nautilus Log block and no parent_uid. Default \"Schedule\"." },
-        collide: { type: "string", enum: ["refuse", "ask"], description: "On overlap with a different task/event: refuse (default) returns the colliding slot without writing; ask does the same but requests a user decision." }
+        align_with: { type: "string", description: "Existing slot title to copy start/end from when the user gave no clocks (e.g. same time as movie night)." },
+        collide: { type: "string", enum: ["refuse", "ask", "allow"], description: "On overlap with a different task/event: refuse (default) returns the colliding slot without writing; ask does the same but requests a user decision; allow writes a new overlapping sibling." }
       },
       required: ["start", "end", "title"]
     },
     execute: async (args = {}) => {
-      // User-text clocks: the user's own times overwrite the model's start/end
-      // whenever they parse (models mis-convert "9pm" too often to trust).
-      // Title is NEVER touched here — only start/end.
-      const fromUser = parseScheduleFieldsFromUserText(deps.getAgentUserMessage?.());
-      const startRaw = fromUser.start || args.start;
-      const endRaw = fromUser.end || args.end;
-      const startNorm = normalizeTime(startRaw);
-      const endNorm = normalizeTime(endRaw);
-      const title = String(args.title || "").trim();
-      if (!startNorm) throw new Error("start is required (HH:MM, 24-hour).");
-      if (!endNorm) throw new Error("end is required (HH:MM, 24-hour; 24:00 allowed for midnight).");
-      if (!title) throw new Error("title is required.");
+      const userMessage = deps.getAgentUserMessage?.() || "";
+      const fromUser = parseScheduleFieldsFromUserText(userMessage);
+      const collide = resolveCollidePolicy(deps, args, userMessage);
+      let title = String(args.title || "").trim();
+      if (!title && lastScheduleCollision?.title) title = lastScheduleCollision.title;
       const kind = String(args.kind || "task") === "event" ? "event" : "task";
-      const collide = String(args.collide || "refuse") === "ask" ? "ask" : "refuse";
-      const prefix = formatSlotPrefix(startNorm, endNorm);
       const api = deps.getRoamAlphaApi();
 
       // 1. Resolve the schedule parent. Order: [sandbox] user-text pin
@@ -442,7 +557,7 @@ export function buildScheduleBlockTool(deps) {
       let parentUid = "";
       let createdParent = false;
       let dailyPage = null;
-      if (isSandboxUserMessage(deps.getAgentUserMessage?.())) {
+      if (isSandboxUserMessage(userMessage)) {
         const sandboxTitle = deps.getSettingString?.("schedule-sandbox-page", DEFAULT_SANDBOX_PAGE) || DEFAULT_SANDBOX_PAGE;
         const pageUid = await deps.ensurePageUidByTitle(sandboxTitle);
         dailyPage = { pageUid, pageTitle: sandboxTitle };
@@ -470,6 +585,46 @@ export function buildScheduleBlockTool(deps) {
         }
       }
 
+      const children = await getChildBlocks(deps, parentUid);
+      const extraTexts = await fetchOpenTodoTexts(deps);
+
+      // Resolve start/end: user-text clocks win, then named anchor, then last
+      // refused window on overlap follow-up, then model args.
+      let startRaw;
+      let endRaw;
+      if (fromUser.start && fromUser.end) {
+        startRaw = fromUser.start;
+        endRaw = fromUser.end;
+      } else {
+        const anchorName = String(args.align_with || "").trim() || parseOverlapAnchor(userMessage);
+        const anchorMatch = anchorName
+          ? findScheduleSlotByTitle(children, anchorName, extraTexts)
+          : null;
+        if (anchorMatch) {
+          startRaw = anchorMatch.slot.start;
+          endRaw = anchorMatch.slot.end;
+        } else if (
+          isOverlapScheduleIntent(userMessage)
+          && lastScheduleCollision
+          && lastScheduleCollision.parent_uid === parentUid
+          && lastScheduleCollision.start
+          && lastScheduleCollision.end
+        ) {
+          startRaw = lastScheduleCollision.start;
+          endRaw = lastScheduleCollision.end;
+        } else {
+          startRaw = args.start;
+          endRaw = args.end;
+        }
+      }
+
+      const startNorm = normalizeTime(startRaw);
+      const endNorm = normalizeTime(endRaw);
+      if (!startNorm) throw new Error("start is required (HH:MM, 24-hour).");
+      if (!endNorm) throw new Error("end is required (HH:MM, 24-hour; 24:00 allowed for midnight).");
+      if (!title) throw new Error("title is required.");
+      const prefix = formatSlotPrefix(startNorm, endNorm);
+
       // 2. Resolve the task uid WITHOUT creating anything yet — a collision
       //    refusal must not leave an orphan TODO behind.
       let taskUid = null;
@@ -489,9 +644,11 @@ export function buildScheduleBlockTool(deps) {
       }
 
       // 3. Collision check against existing slot children. Same task/event
-      //    overlapping its own old slot is a reschedule; anything else refuses.
-      const children = await getChildBlocks(deps, parentUid);
+      //    overlapping its own old slot is a reschedule; allow writes a new
+      //    sibling when overlapping a different slot.
       let rescheduleTarget = null;
+      let firstColliding = null;
+      let overlappedOther = false;
       for (const child of children) {
         const slot = parseSlotLine(child.string);
         if (!slot) continue;
@@ -503,14 +660,29 @@ export function buildScheduleBlockTool(deps) {
           rescheduleTarget = child;
           continue;
         }
+        if (collide === "allow") {
+          if (!firstColliding) firstColliding = { uid: child.uid, string: child.string };
+          overlappedOther = true;
+          continue;
+        }
+        lastScheduleCollision = {
+          start: startNorm,
+          end: endNorm,
+          title,
+          kind,
+          parent_uid: parentUid,
+          colliding_string: child.string,
+          colliding_uid: child.uid,
+          at: Date.now(),
+        };
+        const suffix = collide === "ask"
+          ? " Ask the user: overlap to keep both, move to shift the existing slot, or pick a different time."
+          : " Say overlap or same time to keep both, or pick a different window.";
         return {
           success: false,
-          error: `Time collision: ${startNorm} - ${endNorm} overlaps existing slot "${child.string}". Nothing was written.` +
-            (collide === "ask"
-              ? " Ask the user whether to move the existing slot or pick a different time."
-              : " Pick a different time or reschedule the existing slot first."),
+          error: `Time collision: ${startNorm} - ${endNorm} overlaps existing slot "${child.string}". Nothing was written.${suffix}`,
           colliding_uid: child.uid,
-          colliding_string: child.string
+          colliding_string: child.string,
         };
       }
 
@@ -521,12 +693,19 @@ export function buildScheduleBlockTool(deps) {
         await deps.withRoamWriteRetry(() =>
           api.updateBlock({ block: { uid: rescheduleTarget.uid, string: deps.truncateRoamBlockText(slotString) } })
         );
-        return {
+        clearLastScheduleCollision();
+        const result = {
           success: true, slot_uid: rescheduleTarget.uid, slot_string: slotString,
           task_uid: taskUid, parent_uid: parentUid,
           created_todo: false, reused_todo: reusedTodo, rescheduled: true,
-          created_parent: createdParent
+          created_parent: createdParent,
         };
+        if (overlappedOther && firstColliding) {
+          result.overlapped = true;
+          result.colliding_uid = firstColliding.uid;
+          result.colliding_string = firstColliding.string;
+        }
+        return result;
       }
 
       // 4. Create the TODO now that the slot is known to be writable.
@@ -562,12 +741,19 @@ export function buildScheduleBlockTool(deps) {
         );
       }
 
-      return {
+      clearLastScheduleCollision();
+      const result = {
         success: true, slot_uid: slotUid, slot_string: slotString,
         task_uid: taskUid, parent_uid: parentUid,
         created_todo: createdTodo, reused_todo: reusedTodo,
-        created_parent: createdParent
+        created_parent: createdParent,
       };
+      if (overlappedOther && firstColliding) {
+        result.overlapped = true;
+        result.colliding_uid = firstColliding.uid;
+        result.colliding_string = firstColliding.string;
+      }
+      return result;
     }
   };
 }

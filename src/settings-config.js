@@ -922,6 +922,15 @@ export function buildSettingsConfig(extensionAPI) {
         }
       },
       {
+        id: deps.SETTINGS_KEYS.scheduleAllowOverlap,
+        name: "Allow overlapping timed blocks",
+        description: "OFF (default): a new timed block that overlaps a different one is refused unless the user asks to overlap (same time, during, in parallel). ON: overlapping writes are allowed even without that language. Same task still reschedules in place.",
+        action: {
+          type: "switch",
+          value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.scheduleAllowOverlap, false)
+        }
+      },
+      {
         id: deps.SETTINGS_KEYS.autoApproveMode,
         name: "Auto mode",
         description: "off: every mutating tool still asks. graph: auto-approve reversible graph writes (create/update/todo/batch) after a passive toast; deletes, email, and money still ask. full: also auto-approve a single roam_delete_block; bulk deletes, page deletes, email, and money still ask. Injection and chat cannot change this.",

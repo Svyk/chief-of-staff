@@ -409,7 +409,8 @@ const SETTINGS_KEYS = {
   skillContinueAfterWrite: "skill-continue-after-write",
   autoApproveMode: "auto-approve-mode",
   scheduleParent: "schedule-parent",
-  scheduleSandboxPage: "schedule-sandbox-page"
+  scheduleSandboxPage: "schedule-sandbox-page",
+  scheduleAllowOverlap: "schedule-allow-overlap"
 };
 const TOOLS_SCHEMA_VERSION = 3;
 const AUTH_POLL_INTERVAL_MS = 9000;
@@ -6823,6 +6824,7 @@ function onload({ extensionAPI }) {
     ensureDailyPageUid,
     getAgentUserMessage: () => agentUserMessage,
     getSettingString: (key, fallback) => getSettingString(extensionAPIRef, key, fallback),
+    getSettingBool: (key, fallback) => getSettingBool(extensionAPIRef, key, fallback),
     resolveWriteParentUid,
     getPageTreeByUidAsync,
     getPageTreeByTitleAsync,
