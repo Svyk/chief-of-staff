@@ -1003,6 +1003,15 @@ test("buildForcedScheduleToolCalls returns two calls for and-separated windows",
   assert.equal(calls[1].arguments.title, "reading");
 });
 
+test("buildForcedScheduleToolCalls: move by title does not need a prior collision", () => {
+  clearLastScheduleCollision();
+  const calls = buildForcedScheduleToolCalls("move gaming to 22:00");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].arguments.action, "move");
+  assert.equal(calls[0].arguments.title, "gaming");
+  assert.equal(calls[0].arguments.start, "22:00");
+});
+
 test("short title gym matches via substring", () => {
   const children = [{ uid: "s1", string: "09:00 - 10:00 (**60'**) ((t1))", order: 0 }];
   const extra = new Map([["t1", "{{[[TODO]]}} gym"]]);

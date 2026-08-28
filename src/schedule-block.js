@@ -504,14 +504,17 @@ export function buildForcedScheduleToolCalls(userMessage) {
       arguments: { start: w.start, end: w.end, title: w.title },
     }));
   }
-  if (isMoveIntent(raw) && isLastScheduleCollisionFresh()) {
+  if (isMoveIntent(raw)) {
     const fields = parseScheduleFieldsFromUserText(raw);
-    const hasClocks = Boolean(
-      fields.start && (fields.end || (fields.start && parseDurationMinutes(raw)))
-    );
-    if (hasClocks) {
-      const moveArgs = { action: "move" };
-      if (fields.start) moveArgs.start = fields.start;
+    const hasClocks = Boolean(fields.start);
+    const moveTitle = parseMoveTitle(raw);
+    if (hasClocks && moveTitle) {
+      const moveArgs = { action: "move", title: moveTitle, start: fields.start };
+      if (fields.end) moveArgs.end = fields.end;
+      return [{ name: "cos_schedule_block", arguments: moveArgs }];
+    }
+    if (hasClocks && isLastScheduleCollisionFresh()) {
+      const moveArgs = { action: "move", start: fields.start };
       if (fields.end) moveArgs.end = fields.end;
       return [{ name: "cos_schedule_block", arguments: moveArgs }];
     }
@@ -923,9 +926,11 @@ export function buildScheduleBlockTool(deps) {
 
       // ── Move ──────────────────────────────────────────────────────────────
       if (action === "move") {
+        const namedMoveTitle = parseMoveTitle(userMessage);
         if (
           lastFresh
           && lastFresh.parent_uid === parentUid
+          && !namedMoveTitle
           && (isMoveIntent(userMessage) || String(args.action || "").trim() === "move")
         ) {
           if (!hasParseableMoveClocks(userMessage, args)) {
