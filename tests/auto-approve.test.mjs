@@ -25,6 +25,15 @@ test("mode off: every tool prompts, including reversible graph writes", () => {
 
 // ── classifyAutoApprove: mode graph ─────────────────────────────────────────
 
+test("mode graph: cos_schedule_block unschedule prompts like delete", () => {
+  assert.equal(classifyAutoApprove("cos_schedule_block", { action: "unschedule", title: "gym" }, "graph"), "prompt");
+  assert.equal(classifyAutoApprove("cos_schedule_block", { action: "place", start: "09:00", end: "10:00", title: "gym" }, "graph"), "auto");
+});
+
+test("mode full: cos_schedule_block unschedule auto-approves", () => {
+  assert.equal(classifyAutoApprove("cos_schedule_block", { action: "unschedule", title: "gym" }, "full"), "auto");
+});
+
 test("mode graph: reversible graph writes auto-approve", () => {
   for (const name of ["roam_create_block", "roam_create_blocks", "roam_update_block",
     "roam_batch_write", "roam_create_todo", "roam_modify_todo", "roam_create_page",

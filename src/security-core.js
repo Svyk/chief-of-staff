@@ -556,6 +556,10 @@ export function normaliseAutoApproveMode(mode) {
 
 // Classify one already-resolved (non-meta) tool name. Never unwraps.
 function classifyResolvedAutoApprove(resolvedName, args, mode) {
+  if (resolvedName === "cos_schedule_block" && String(args?.action || "").trim() === "unschedule") {
+    if (mode === "full") return "auto";
+    return "prompt";
+  }
   if (AUTO_APPROVE_GRAPH_WRITE_TOOLS.has(resolvedName)) return "auto";
   if (AUTO_APPROVE_SINGLE_DELETE_TOOLS.has(resolvedName) && mode === "full") {
     const uids = Array.isArray(args?.uids)

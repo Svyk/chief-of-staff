@@ -14,6 +14,14 @@ import {
   isCronLikeScheduleIntent,
   isScheduleSlotIntent,
   buildForcedScheduleToolCall,
+  buildForcedScheduleToolCalls,
+  parseMultipleScheduleWindows,
+  isMoveIntent,
+  isUnscheduleIntent,
+  parseMoveTitle,
+  parseUnscheduleTitle,
+  findAllScheduleSlotsByTitle,
+  findScheduleSlotByTitle,
   clearLastScheduleCollision,
   getLastScheduleCollision,
   COS_SCHEDULE_BLOCK_BUILD,
@@ -97,6 +105,12 @@ function makeFakeGraph() {
       const b = blocks.get(block.uid);
       if (!b) throw new Error(`updateBlock: block ${block.uid} not found`);
       b.string = block.string;
+      return true;
+    },
+    deleteBlock: async ({ block }) => {
+      const uid = block?.uid;
+      if (!blocks.has(uid)) throw new Error(`deleteBlock: block ${uid} not found`);
+      blocks.delete(uid);
       return true;
     },
   };
@@ -265,7 +279,8 @@ test("collision with a different task refuses and overwrites nothing", async () 
   assert.equal(result.colliding_uid, existingSlot);
   assert.equal(result.colliding_string, before);
   assert.match(result.error, /collision/i);
-  assert.ok(!/\bmove\b/i.test(result.error), "collision copy must not mention move");
+  assert.match(result.error, /\bmove\b/i, "collision copy must mention move");
+  assert.match(result.error, /21:00-23:00/, "collision copy must include a time example");
   assert.equal(g.blocks.get(existingSlot).string, before, "existing slot must be untouched");
   assert.equal(g.childrenOf(parentUid).length, childCountBefore, "no slot may be written");
   assert.equal(g.todoCount(), 1, "no orphan TODO on refusal");
@@ -486,8 +501,8 @@ test("resolveConfiguredScheduleParent returns null for empty input", async () =>
 });
 // ── User-text clocks ─────────────────────────────────────────────────────────
 
-test("build stamp bumped for the timed-block build", () => {
-  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260827-timedblock");
+test("build stamp bumped for the move build", () => {
+  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260827-move");
 });
 
 test("parseFlexibleTime covers the full token table", () => {
@@ -820,4 +835,181 @@ test("[sandbox] still pins sandbox over tomorrow date pin", async () => {
   assert.equal(result.success, true);
   assert.equal(result.parent_uid, sandboxNautilus);
   assert.equal(g.childrenOf(todayNautilus).length, 0);
+});
+
+// ── Move, unschedule, multi-window ───────────────────────────────────────────
+
+test("collision then move 21:00-23:00 shifts colliding slot and places refused title", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const movieTodo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  const movieSlot = g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${movieTodo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+  assert.equal(refused.success, false);
+
+  g.deps.getAgentUserMessage = () => "move 21:00-23:00";
+  const moved = await tool.execute({ action: "move", start: "21:00", end: "23:00" });
+
+  assert.equal(moved.success, true);
+  assert.equal(moved.moved, true);
+  assert.equal(moved.moved_uid, movieSlot);
+  assert.match(moved.moved_string, /^21:00 - 23:00/);
+  assert.match(moved.slot_string, /^19:00 - 21:00/);
+  assert.equal(g.childrenOf(parentUid).length, 2);
+  assert.equal(g.todoCount(), 2);
+});
+
+test("collision then bare move writes nothing and asks for clocks", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const movieTodo = g.insertBlock(pageUid, "{{[[TODO]]}} movie night");
+  const movieSlot = g.insertBlock(parentUid, `19:00 - 21:00 (**120'**) ((${movieTodo}))`);
+  const before = g.blocks.get(movieSlot).string;
+  const tool = buildScheduleBlockTool(g.deps);
+
+  await tool.execute({
+    date: "August 27th, 2026", start: "19:00", end: "21:00", title: "Laundry",
+  });
+
+  g.deps.getAgentUserMessage = () => "move";
+  const result = await tool.execute({ action: "move" });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /\bmove\b/i);
+  assert.match(result.error, /21:00-23:00/);
+  assert.equal(result.colliding_string, before);
+  assert.equal(g.childrenOf(parentUid).length, 1);
+});
+
+test("move gaming to 22:00 reschedules in place keeping duration across midnight", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} gaming session");
+  const slotUid = g.insertBlock(parentUid, `21:00 - 00:00 (**180'**) ((${todo}))`);
+  g.deps.getAgentUserMessage = () => "move gaming to 22:00";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({ start: "22:00", end: "01:00", title: "gaming" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.rescheduled, true);
+  assert.equal(result.slot_uid, slotUid);
+  assert.equal(g.blocks.get(slotUid).string, `22:00 - 01:00 (**180'**) ((${todo}))`);
+  assert.equal(g.childrenOf(parentUid).length, 1);
+});
+
+test("remove the gaming block deletes slot but keeps TODO", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} gaming session");
+  const slotUid = g.insertBlock(parentUid, `21:00 - 00:00 (**180'**) ((${todo}))`);
+  g.deps.getAgentUserMessage = () => "remove the gaming block";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({ action: "unschedule", title: "gaming" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.unscheduled, true);
+  assert.equal(result.task_uid, todo);
+  assert.equal(g.blocks.has(slotUid), false);
+  assert.equal(g.blocks.has(todo), true);
+  assert.equal(g.todoCount(), 1);
+});
+
+test("unschedule event removes #Event line only", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const slotUid = g.insertBlock(parentUid, "19:00 - 21:00  movie night #Event");
+  g.deps.getAgentUserMessage = () => "unschedule movie night";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const result = await tool.execute({ action: "unschedule", title: "movie night", kind: "event" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.unscheduled, true);
+  assert.equal(result.task_uid, null);
+  assert.equal(g.blocks.has(slotUid), false);
+  assert.equal(g.todoCount(), 0);
+});
+
+test("two matching titles: unschedule refuses", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const t1 = g.insertBlock(pageUid, "{{[[TODO]]}} gaming");
+  const t2 = g.insertBlock(pageUid, "{{[[TODO]]}} gaming backup");
+  g.insertBlock(parentUid, `21:00 - 22:00 (**60'**) ((${t1}))`);
+  g.insertBlock(parentUid, `22:00 - 23:00 (**60'**) ((${t2}))`);
+  g.deps.getAgentUserMessage = () => "unschedule gaming";
+  const tool = buildScheduleBlockTool(g.deps);
+
+  await assert.rejects(
+    () => tool.execute({ action: "unschedule", title: "gaming" }),
+    /Multiple timed blocks match/
+  );
+  assert.equal(g.childrenOf(parentUid).length, 2);
+});
+
+test("parseMultipleScheduleWindows: two adjacent windows", () => {
+  const windows = parseMultipleScheduleWindows("add gym 09:00-10:00 and reading 10:00-11:00");
+  assert.equal(windows.length, 2);
+  assert.equal(windows[0].title, "gym");
+  assert.equal(windows[1].title, "reading");
+});
+
+test("multi-window execute writes both slots in chronological order", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const smartUid = g.insertBlock(parentUid, SMARTBLOCK_STRING);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const first = await tool.execute({
+    date: "August 27th, 2026", start: "09:00", end: "10:00", title: "gym",
+  });
+  const second = await tool.execute({
+    date: "August 27th, 2026", start: "10:00", end: "11:00", title: "reading",
+  });
+
+  assert.equal(first.success, true);
+  assert.equal(second.success, true);
+  assert.equal(g.todoCount(), 2);
+  const kids = g.childrenOf(parentUid).filter((c) => c.uid !== smartUid);
+  assert.equal(kids.length, 2);
+  assert.match(kids[0].string, /^09:00 - 10:00/);
+  assert.match(kids[1].string, /^10:00 - 11:00/);
+});
+
+test("buildForcedScheduleToolCalls returns two calls for and-separated windows", () => {
+  const calls = buildForcedScheduleToolCalls("add gym 09:00-10:00 and reading 10:00-11:00");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].arguments.title, "gym");
+  assert.equal(calls[1].arguments.title, "reading");
+});
+
+test("short title gym matches via substring", () => {
+  const children = [{ uid: "s1", string: "09:00 - 10:00 (**60'**) ((t1))", order: 0 }];
+  const extra = new Map([["t1", "{{[[TODO]]}} gym"]]);
+  assert.ok(findScheduleSlotByTitle(children, "gym", extra));
+});
+
+test("movie nite does not match movie night", () => {
+  const children = [{ uid: "s1", string: "19:00 - 21:00  movie night #Event", order: 0 }];
+  assert.equal(findScheduleSlotByTitle(children, "movie nite"), null);
 });

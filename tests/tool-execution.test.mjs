@@ -757,10 +757,10 @@ test("slot grammar: #Event slot line refuses; plain text and headings pass", () 
     null,
     "a heading edit must pass"
   );
-  // A slot line WITHOUT a ref/#Event is not the mangled-grammar case
-  assert.equal(
-    slotGrammarRefuseError("roam_create_block", { parent_uid: "p", text: "21:00 - 00:00 plain note" }),
-    null
+  // Any slot-shaped line is refused, even without ((uid)) or #Event
+  assert.ok(
+    slotGrammarRefuseError("roam_create_block", { parent_uid: "p", text: "21:00 - 00:00 plain note" })?.error,
+    "plain slot line must refuse"
   );
 });
 
@@ -775,7 +775,7 @@ test("slot grammar: scans batches and ROAM_EXECUTE inner args", () => {
     tool_name: "roam_batch_write",
     arguments: { parent_uid: "p", markdown: "- 21:00 - 00:00 (**180'**) ((abc))" }
   });
-  assert.equal(wrapped, null, "a markdown LIST ITEM is not a slot line — only bare slot lines refuse");
+  assert.ok(wrapped?.error, "a markdown list item slot line must refuse");
 
   const wrappedSlot = slotGrammarRefuseError("ROAM_EXECUTE", {
     tool_name: "roam_batch_write",

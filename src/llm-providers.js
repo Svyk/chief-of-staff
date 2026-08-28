@@ -20,7 +20,13 @@ import {
   createCodexStreamState,
   reduceCodexSseEvent
 } from "./codex-responses.js";
-import { isCronLikeScheduleIntent, isScheduleSlotIntent } from "./schedule-block.js";
+import {
+  isCronLikeScheduleIntent,
+  isScheduleSlotIntent,
+  isMoveIntent,
+  isUnscheduleIntent,
+  parseMultipleScheduleWindows,
+} from "./schedule-block.js";
 
 // ── DI container ─────────────────────────────────────────────────────────────
 let deps = {};
@@ -1420,14 +1426,21 @@ const TIMED_BLOCK_BYPASS_TOOLS = new Set([
   "roam_create_todo", "roam_update_block"
 ]);
 
+export function shouldDropBypassToolsForTimedBlock(userMessage) {
+  const msg = String(userMessage || "");
+  if (isScheduleSlotIntent(msg)) return true;
+  if (isMoveIntent(msg)) return true;
+  if (isUnscheduleIntent(msg)) return true;
+  if (parseMultipleScheduleWindows(msg).length >= 2) return true;
+  return false;
+}
+
 /**
- * On a one-window schedule request ("schedule gaming 9pm to midnight"), drop
- * the tools that let the model write the slot by hand or as a cron job, so
- * cos_schedule_block is the only path. Runs after BOTH the relevance filter
- * and skill-whitelist filtering (runAgentLoop applies it there too).
+ * On a timed-block request, drop tools that let the model write the slot by
+ * hand or as a cron job, so cos_schedule_block is the only path.
  */
 export function dropBypassToolsForTimedBlock(tools, userMessage) {
-  if (!isScheduleSlotIntent(userMessage)) return tools;
+  if (!shouldDropBypassToolsForTimedBlock(userMessage)) return tools;
   return (Array.isArray(tools) ? tools : []).filter((t) => {
     const name = t?.name || "";
     if (TIMED_BLOCK_BYPASS_TOOLS.has(name)) return false;
