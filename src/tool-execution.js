@@ -559,12 +559,16 @@ export function slotGrammarRefuseError(toolName, args) {
   collectBlocks(inner.blocks);
   if (Array.isArray(inner.batches)) for (const batch of inner.batches) collectBlocks(batch?.blocks);
   for (const line of lines) {
-    const slot = parseSlotLine(line);
-    if (slot && (slot.refUid || slot.isEvent)) {
+    const slot = parseSlotLine(stripMarkdownListMarker(line));
+    if (slot) {
       return { error: "Timed slots go through cos_schedule_block — this tool's markdown parsing mangles ((refs))." };
     }
   }
   return null;
+}
+
+function stripMarkdownListMarker(line) {
+  return String(line || "").replace(/^\s*(?:[-*]|\d+\.)\s+/, "");
 }
 
 

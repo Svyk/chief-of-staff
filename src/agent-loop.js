@@ -30,7 +30,7 @@ import {
   buildEffectiveFailoverChain, isCustomProvider, getCustomProviderConfig
 } from "./llm-providers.js";
 import { dropBypassToolsForTimedBlock } from "./llm-providers.js";
-import { buildForcedScheduleToolCall } from "./schedule-block.js";
+import { buildForcedScheduleToolCalls } from "./schedule-block.js";
 
 import {
   getConversationTurns, getConversationMessages,
@@ -224,12 +224,58 @@ export function shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settin
   if (settingOn === false) return false;
   if (skillContinueAfterWrite !== false && skillActive) return false;
   if (approvedPlan) return false;
-  if (!Array.isArray(toolResults) || toolResults.length !== 1) return false;
+  if (!Array.isArray(toolResults) || !toolResults.length) return false;
+
+  const isScheduleWrite = (tr) => {
+    const name = tr?.toolCall?.name;
+    const inner = tr?.toolCall?.arguments?.tool_name;
+    return name === "cos_schedule_block" || (name === "ROAM_EXECUTE" && inner === "cos_schedule_block");
+  };
+
+  const allSchedule = toolResults.every(isScheduleWrite);
+  if (allSchedule && toolResults.length >= 1 && toolResults.length <= 4) {
+    const successes = toolResults.filter((tr) => tr?.result?.success && !tr?.result?.error);
+    const last = toolResults[toolResults.length - 1];
+    const lastIsCollision = Boolean(
+      last?.result?.colliding_string && (last?.result?.success === false || last?.result?.error)
+    );
+    if (lastIsCollision && successes.length > 0) return true;
+    if (successes.length === toolResults.length) return true;
+    return false;
+  }
+
+  if (toolResults.length !== 1) return false;
   const last = toolResults[0];
   if (last?.result?.error) return false;
   const name = last?.toolCall?.name;
   const isWrite = writeToolNames?.has(name) || (name === "ROAM_EXECUTE" && writeToolNames?.has(last?.toolCall?.arguments?.tool_name));
   return isWrite === true;
+}
+
+function scheduleBlockConfirmationLine(resultData) {
+  if (resultData?.unscheduled) return `Timed block removed: ${resultData.slot_string}`;
+  if (resultData?.moved && resultData?.moved_string) {
+    let msg = `Timed block moved: ${resultData.moved_string}`;
+    if (resultData.slot_string) msg += `\nTimed block placed: ${resultData.slot_string}`;
+    return msg;
+  }
+  if (resultData?.rescheduled) return `Timed block moved: ${resultData.slot_string}`;
+  if (resultData?.overlapped) return `Timed block placed alongside an existing one: ${resultData.slot_string}`;
+  return `Timed block placed: ${resultData.slot_string}`;
+}
+
+export function batchShortCircuitMessage(toolResults) {
+  const lines = [];
+  for (const tr of toolResults) {
+    if (tr?.result?.success && tr?.result?.slot_string) {
+      lines.push(scheduleBlockConfirmationLine(tr.result));
+    }
+  }
+  const last = toolResults[toolResults.length - 1];
+  if (last?.result?.colliding_string && (last?.result?.success === false || last?.result?.error)) {
+    lines.push(collisionShortCircuitMessage(last.result));
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -273,10 +319,7 @@ export function shortCircuitMessage(toolCall, result) {
   const innerName = toolCall?.arguments?.tool_name;
   const effectiveName = toolName === "ROAM_EXECUTE" ? innerName : toolName;
   if (effectiveName === "cos_schedule_block" && resultData.slot_string) {
-    if (resultData.overlapped) {
-      return `Timed block placed alongside an existing one: ${resultData.slot_string}`;
-    }
-    return `Timed block placed: ${resultData.slot_string}`;
+    return scheduleBlockConfirmationLine(resultData);
   }
   return `Written successfully.`;
 }
@@ -301,7 +344,7 @@ export function shouldShortCircuitAfterCollision({ toolResults, skillActive, ski
 
 export function collisionShortCircuitMessage(result) {
   const colliding = result?.colliding_string ?? "";
-  return `Time collision: ${colliding}\nThat window is taken. Reply overlap to keep both, or pick a different time.`;
+  return `Time collision: ${colliding}\nThat window is taken. Reply overlap to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.`;
 }
 
 // ── Core agent loop ─────────────────────────────────────────────────────────
@@ -767,11 +810,19 @@ export async function runAgentLoop(userMessage, options = {}) {
       // no tool call at all — inject the cos_schedule_block call the user
       // asked for (built from THEIR times, not the model's prose). Downstream
       // guards then see a real tool call; no empty-response nudge is sent.
-      if (toolCalls.length === 0 && !readOnlyTools && !planMode) {
-        const forced = buildForcedScheduleToolCall(userMessage);
-        if (forced) {
-          toolCalls = [forced];
-          deps.debugLog("[Chief flow] Force-dispatch: injected cos_schedule_block for a timed-block request the model answered without tools.");
+      if (!readOnlyTools && !planMode) {
+        const forced = buildForcedScheduleToolCalls(userMessage);
+        if (forced.length >= 1) {
+          const onlySchedule = toolCalls.length === 0
+            || toolCalls.every((tc) => tc.name === "cos_schedule_block");
+          const hasNonSchedule = toolCalls.some((tc) => tc.name && tc.name !== "cos_schedule_block");
+          if (forced.length >= 2 && onlySchedule && !hasNonSchedule) {
+            toolCalls = forced;
+            deps.debugLog("[Chief flow] Force-dispatch: replaced cos_schedule_block batch for multi-window schedule request.");
+          } else if (toolCalls.length === 0) {
+            toolCalls = forced;
+            deps.debugLog("[Chief flow] Force-dispatch: injected cos_schedule_block for a timed-block request the model answered without tools.");
+          }
         }
       }
 
@@ -1374,7 +1425,9 @@ export async function runAgentLoop(userMessage, options = {}) {
         return { text: finalText, messages, mcpResultTexts };
       }
       if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES, skillActive, skillContinueAfterWrite })) {
-        const finalText = shortCircuitMessage(lastToolResult.toolCall, lastToolResult.result);
+        const finalText = toolResults.length > 1
+          ? batchShortCircuitMessage(toolResults)
+          : shortCircuitMessage(lastToolResult.toolCall, lastToolResult.result);
         deps.debugLog("[Chief flow] runAgentLoop short-circuit: write tool succeeded, skipping final LLM call.");
         trace.finishedAt = Date.now();
         trace.resultTextPreview = finalText;

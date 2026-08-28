@@ -23,6 +23,7 @@ import {
   shouldEscalateClaimedAction,
   shouldShortCircuitAfterWrite,
   shortCircuitMessage,
+  batchShortCircuitMessage,
   shouldShortCircuitAfterCollision,
   collisionShortCircuitMessage,
 } from "../src/agent-loop.js";
@@ -435,14 +436,15 @@ describe("shouldShortCircuitAfterCollision", () => {
 });
 
 describe("collisionShortCircuitMessage", () => {
-  it("echoes colliding_string verbatim in a two-line message", () => {
+  it("echoes colliding_string verbatim in a two-line message with move hint", () => {
     const msg = collisionShortCircuitMessage({ colliding_string: "21:00 - 00:00 (**180'**) ((abc))" });
     assert.ok(msg.includes("21:00 - 00:00 (**180'**) ((abc))"));
     assert.equal(
       msg,
-      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap to keep both, or pick a different time."
+      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time."
     );
-    assert.ok(!/\bmove\b/i.test(msg), "collision copy must not mention move");
+    assert.match(msg, /\bmove\b/i, "collision copy must mention move");
+    assert.match(msg, /21:00-23:00/, "collision copy must include a time example");
   });
 });
 
@@ -666,6 +668,21 @@ describe("shouldShortCircuitAfterWrite", () => {
         writeToolNames: SHORT_WRITE_TOOL_NAMES,
         skillActive: undefined,
         skillContinueAfterWrite: true,
+      }),
+      true
+    );
+  });
+
+  it("returns true for two successful cos_schedule_block results", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: [
+          { toolCall: { name: "cos_schedule_block" }, result: { success: true, slot_string: "09:00 - 10:00 (**60'**) ((a))" } },
+          { toolCall: { name: "cos_schedule_block" }, result: { success: true, slot_string: "10:00 - 11:00 (**60'**) ((b))" } },
+        ],
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
       }),
       true
     );
@@ -924,6 +941,48 @@ describe("shortCircuitMessage", () => {
         { slot_string: "14:00 - 15:00 (**60'**) ((todo3))" }
       ),
       "Timed block placed: 14:00 - 15:00 (**60'**) ((todo3))"
+    );
+  });
+
+  it("cos_schedule_block unschedule", () => {
+    assert.equal(
+      shortCircuitMessage(
+        { name: "cos_schedule_block" },
+        { unscheduled: true, slot_string: "21:00 - 00:00 (**180'**) ((g))" }
+      ),
+      "Timed block removed: 21:00 - 00:00 (**180'**) ((g))"
+    );
+  });
+
+  it("cos_schedule_block moved/rescheduled", () => {
+    assert.equal(
+      shortCircuitMessage(
+        { name: "cos_schedule_block" },
+        { rescheduled: true, slot_string: "22:00 - 01:00 (**180'**) ((g))" }
+      ),
+      "Timed block moved: 22:00 - 01:00 (**180'**) ((g))"
+    );
+    assert.equal(
+      shortCircuitMessage(
+        { name: "cos_schedule_block" },
+        {
+          moved: true,
+          moved_string: "21:00 - 23:00 (**120'**) ((m))",
+          slot_string: "19:00 - 21:00 (**120'**) ((l))",
+        }
+      ),
+      "Timed block moved: 21:00 - 23:00 (**120'**) ((m))\nTimed block placed: 19:00 - 21:00 (**120'**) ((l))"
+    );
+  });
+
+  it("batchShortCircuitMessage combines multi-window successes", () => {
+    const msg = batchShortCircuitMessage([
+      { result: { success: true, slot_string: "09:00 - 10:00 (**60'**) ((a))" } },
+      { result: { success: true, slot_string: "10:00 - 11:00 (**60'**) ((b))" } },
+    ]);
+    assert.equal(
+      msg,
+      "Timed block placed: 09:00 - 10:00 (**60'**) ((a))\nTimed block placed: 10:00 - 11:00 (**60'**) ((b))"
     );
   });
 });
