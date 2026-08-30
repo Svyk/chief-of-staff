@@ -55,7 +55,13 @@ import { buildPlanModeAddendum, buildExecutionAddendum } from "./plan-mode.js";
 import { getLocalMcpToolsCache, getLocalMcpTools } from "./local-mcp.js";
 import { getRemoteMcpToolsCache, getRemoteMcpTools } from "./remote-mcp.js";
 import { getToolkitSchemaRegistry } from "./composio-mcp.js";
+import {
+  isMultiWriteGraphIntent,
+  resolveMultiWriteMaxIterations,
+} from "./multi-write-intent.js";
 // parseSkillSources injected via deps (avoids transitive izitoast dependency from deterministic-router → chat-panel)
+
+export { isMultiWriteGraphIntent, resolveMultiWriteMaxIterations };
 
 // ── Dependency injection ────────────────────────────────────────────────────
 
@@ -210,38 +216,6 @@ export function shouldEscalateClaimedAction({ provider, effectiveTier, sessionCo
   if (allProviders !== false) return true;
   // allProviders OFF: legacy Gemini-only gate
   return provider === "gemini";
-}
-
-/**
- * True when the user asked for a multi-step graph edit (rearrange a list,
- * insert many seasons into a watch order, move existing TODOs, etc.).
- * Suppresses the one-write short-circuit so the model can keep writing.
- */
-export function isMultiWriteGraphIntent(text) {
-  const raw = String(text || "");
-  if (!raw.trim()) return false;
-  if (/\b(?:rearrange|reorder|re-?order)\b/i.test(raw)) return true;
-  if (/\binsert\b[\s\S]{0,120}?\b(?:into|in)\b[\s\S]{0,80}?\b(?:list|order|watch\s+order)\b/i.test(raw)) return true;
-  if (/\b(?:move|shift)\b[\s\S]{0,80}?\b(?:existing\s+)?(?:todos?|items?|blocks?)\b/i.test(raw)) return true;
-  if (/\bwatch\s+order\b/i.test(raw) && /\b(?:insert|rearrange|reorder|seasons?|remaining)\b/i.test(raw)) return true;
-  if (/\b(?:multiple|many|several)\b[\s\S]{0,40}?\b(?:blocks?|todos?|items?|seasons?)\b/i.test(raw)) return true;
-  if (/\brearrange\s*\/\s*move\b/i.test(raw)) return true;
-  return false;
-}
-
-/**
- * Raise the iteration cap for multi-write rearrange runs.
- * Weaker models often spend one iteration per tool call; a season insert needs
- * more than the default chat cap. Pure helper — no deps.
- *   - base below minBoost → minBoost
- *   - base already higher → keep base
- *   - never above hardCap (default 40)
- */
-export function resolveMultiWriteMaxIterations(baseMax, { minBoost = 32, hardCap = 40 } = {}) {
-  const base = Number.isFinite(Number(baseMax)) ? Math.floor(Number(baseMax)) : 20;
-  const floor = Number.isFinite(Number(minBoost)) ? Math.floor(Number(minBoost)) : 32;
-  const cap = Number.isFinite(Number(hardCap)) ? Math.floor(Number(hardCap)) : 40;
-  return Math.min(cap, Math.max(base, floor));
 }
 
 /**
@@ -422,9 +396,9 @@ export async function runAgentLoop(userMessage, options = {}) {
   let maxIterations = initialMaxIterations;
   let gatheringGuard = initialGatheringGuard;
 
-  // Multi-write rearrange (watch-order inserts, move many TODOs): raise the
-  // cap the same way gathering-guard does for skills — default 20 is too low
-  // when a model burns one iteration per create/move.
+  // Multi-write graph edits (rearrange a list, fill an outline, migrate many
+  // children): raise the cap the same way gathering-guard does for skills —
+  // default 20 is too low when a model burns one iteration per create/move.
   if (isMultiWriteGraphIntent(userMessage)) {
     const boosted = resolveMultiWriteMaxIterations(maxIterations);
     if (boosted > maxIterations) {
@@ -581,6 +555,7 @@ export async function runAgentLoop(userMessage, options = {}) {
     toolCount: tools.length,
     breakdown: toolTokenBreakdown
   });
+  const multiWriteIntentAtStart = isMultiWriteGraphIntent(userMessage);
   const trace = {
     startedAt: Date.now(),
     finishedAt: null,
@@ -593,6 +568,7 @@ export async function runAgentLoop(userMessage, options = {}) {
     resultTextPreview: "",
     error: null,
     guardsFired: [],
+    multiWriteIntent: multiWriteIntentAtStart,
     inputBreakdown: { systemChars, toolsChars, messagesChars, totalInputChars, estInputTokens, toolPct, toolCount: tools.length, toolTokenBreakdown }
   };
   lastAgentRunTrace = trace;

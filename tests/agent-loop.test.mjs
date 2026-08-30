@@ -468,26 +468,43 @@ function loneWrite({ name, args, result }) {
 }
 
 describe("isMultiWriteGraphIntent", () => {
-  it("detects rearrange / watch-order insert / move existing todos", () => {
+  it("detects rearrange / mid-list insert / multi-target writes", () => {
     const trueCases = [
-      "rearrange the MCU Watch Order list",
-      "insert the remaining Agents of S.H.I.E.L.D. seasons into the main Watch Order",
+      "rearrange the reading list",
+      "insert the remaining items into the main list",
       "reorder TODOs so the list stays chronological",
-      "move existing TODOs as needed under Watch Order",
-      "Look at [[MCU Watch Order]] and insert remaining seasons",
+      "move existing TODOs as needed under Projects",
       "rearrange/move existing TODOs as needed",
+      "batch add all of these tasks to my daily page",
+      "sort the grocery list alphabetically",
+      "reorganise the [[Project Alpha]] page",
+      "fill in the outline under [[Trip Planning]]",
+      "flesh out this outline with the points we discussed",
+      "migrate the children of [[Old Inbox]] to [[Inbox]]",
+      "add all of these to my notes",
+      "consolidate the children under one parent block",
+      "turn each of these bullets into its own page",
+      "move every completed task to the archive page",
     ];
     for (const t of trueCases) {
       assert.equal(isMultiWriteGraphIntent(t), true, `expected true: ${t}`);
     }
   });
 
-  it("stays false for single casual writes", () => {
+  it("stays false for single writes and read-only multi-noun questions", () => {
     const falseCases = [
       "add a note about coffee",
       "schedule gaming 9pm to midnight",
       "create a TODO for laundry",
       "",
+      "how many todos are overdue?",
+      "what sort of music do I listen to?",
+      "show me all of these pages",
+      "summarise the children of [[Projects]]",
+      "what's on my reading list?",
+      "insert a page break in this document",
+      "expand on your last answer",
+      "create a page called Watch Order",
     ];
     for (const t of falseCases) {
       assert.equal(isMultiWriteGraphIntent(t), false, `expected false: ${t}`);
