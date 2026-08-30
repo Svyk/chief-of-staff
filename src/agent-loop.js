@@ -213,16 +213,35 @@ export function shouldEscalateClaimedAction({ provider, effectiveTier, sessionCo
 }
 
 /**
+ * True when the user asked for a multi-step graph edit (rearrange a list,
+ * insert many seasons into a watch order, move existing TODOs, etc.).
+ * Suppresses the one-write short-circuit so the model can keep writing.
+ */
+export function isMultiWriteGraphIntent(text) {
+  const raw = String(text || "");
+  if (!raw.trim()) return false;
+  if (/\b(?:rearrange|reorder|re-?order)\b/i.test(raw)) return true;
+  if (/\binsert\b[\s\S]{0,120}?\b(?:into|in)\b[\s\S]{0,80}?\b(?:list|order|watch\s+order)\b/i.test(raw)) return true;
+  if (/\b(?:move|shift)\b[\s\S]{0,80}?\b(?:existing\s+)?(?:todos?|items?|blocks?)\b/i.test(raw)) return true;
+  if (/\bwatch\s+order\b/i.test(raw) && /\b(?:insert|rearrange|reorder|seasons?|remaining)\b/i.test(raw)) return true;
+  if (/\b(?:multiple|many|several)\b[\s\S]{0,40}?\b(?:blocks?|todos?|items?|seasons?)\b/i.test(raw)) return true;
+  if (/\brearrange\s*\/\s*move\b/i.test(raw)) return true;
+  return false;
+}
+
+/**
  * Decide whether to end the run after a lone successful write.
  * Pure helper — no deps, no mock.module needed.
  *
  * `skillContinueAfterWrite` (default ON, including undefined): when a skill
  * is active, the skill may take another turn even if the one-write switch is
  * ON. Casual chat (skillActive false/undefined) still short-circuits.
+ * `multiWriteIntent` (rearrange / insert-many) also suppresses short-circuit.
  */
-export function shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames, skillActive, skillContinueAfterWrite }) {
+export function shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames, skillActive, skillContinueAfterWrite, multiWriteIntent }) {
   if (settingOn === false) return false;
   if (skillContinueAfterWrite !== false && skillActive) return false;
+  if (multiWriteIntent) return false;
   if (approvedPlan) return false;
   if (!Array.isArray(toolResults) || !toolResults.length) return false;
 
@@ -1431,7 +1450,8 @@ export async function runAgentLoop(userMessage, options = {}) {
         deps.updateChatPanelCostIndicator();
         return { text: finalText, messages, mcpResultTexts };
       }
-      if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES, skillActive, skillContinueAfterWrite })) {
+      const multiWriteIntent = isMultiWriteGraphIntent(userMessage);
+      if (shouldShortCircuitAfterWrite({ toolResults, approvedPlan, settingOn, writeToolNames: deps.WRITE_TOOL_NAMES, skillActive, skillContinueAfterWrite, multiWriteIntent })) {
         const finalText = toolResults.length > 1
           ? batchShortCircuitMessage(toolResults)
           : shortCircuitMessage(lastToolResult.toolCall, lastToolResult.result);

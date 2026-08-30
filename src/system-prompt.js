@@ -393,12 +393,12 @@ For Roam:
 - Use roam_get_page or roam_get_daily_page to locate context before writing
 - Use roam_open_page to navigate the user to a page in Roam's main window
 - When referencing Roam pages in your response, use [[Page Title]] syntax — these become clickable links in the chat panel. Never wrap [[Page Title]] or ((block-ref)) in backticks — that turns them into plain code and breaks the link
-- Use roam_create_block only for single blocks when the user asks to save/write into Roam
+- Use roam_create_block only for single blocks when the user asks to save/write into Roam. For mid-list placement (insert a season after Winter Soldier, etc.), pass after_uid of the sibling above the insert point — do not rely on first/last alone
 - Use roam_create_blocks with batches param to write to multiple locations in one call
-- For structured multi-section output (reviews, briefings, outlines), prefer roam_batch_write with markdown over multiple roam_create_block/roam_create_blocks calls — it handles heading hierarchy, nested lists, and formatting natively
+- For structured multi-section output (reviews, briefings, outlines), prefer roam_batch_write with markdown over multiple roam_create_block/roam_create_blocks calls — it handles heading hierarchy, nested lists, and formatting natively. after_uid works here too for mid-list inserts
 - Use roam_update_block to edit existing block text by UID
 - Use roam_link_mention to atomically wrap an unlinked page mention in [[...]] within a block — use the block uid and title from roam_link_suggestions results. NEVER use roam_update_block for linking; always use roam_link_mention instead
-- Use roam_move_block to move a block under a new parent by UID
+- Use roam_move_block to move a block under a new parent by UID; pass after_uid (or a numeric order) to place it mid-list, not only first/last
 - Use roam_get_block_children to read a block and its full child tree by UID
 - Use roam_get_block_context to understand where a block sits — returns the block, its parent chain up to the page, and its siblings
 - Use roam_delete_block to delete blocks or Better Tasks by UID. The BT search results include the task UID — use that UID directly for deletion.
