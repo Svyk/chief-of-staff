@@ -26,6 +26,7 @@ import {
   batchShortCircuitMessage,
   shouldShortCircuitAfterCollision,
   collisionShortCircuitMessage,
+  isMultiWriteGraphIntent,
 } from "../src/agent-loop.js";
 import { clampSkillMaxIterations } from "../src/settings-config.js";
 
@@ -465,7 +466,48 @@ function loneWrite({ name, args, result }) {
   return [{ toolCall: { name, arguments: args || {} }, result: result || {} }];
 }
 
+describe("isMultiWriteGraphIntent", () => {
+  it("detects rearrange / watch-order insert / move existing todos", () => {
+    const trueCases = [
+      "rearrange the MCU Watch Order list",
+      "insert the remaining Agents of S.H.I.E.L.D. seasons into the main Watch Order",
+      "reorder TODOs so the list stays chronological",
+      "move existing TODOs as needed under Watch Order",
+      "Look at [[MCU Watch Order]] and insert remaining seasons",
+      "rearrange/move existing TODOs as needed",
+    ];
+    for (const t of trueCases) {
+      assert.equal(isMultiWriteGraphIntent(t), true, `expected true: ${t}`);
+    }
+  });
+
+  it("stays false for single casual writes", () => {
+    const falseCases = [
+      "add a note about coffee",
+      "schedule gaming 9pm to midnight",
+      "create a TODO for laundry",
+      "",
+    ];
+    for (const t of falseCases) {
+      assert.equal(isMultiWriteGraphIntent(t), false, `expected false: ${t}`);
+    }
+  });
+});
+
 describe("shouldShortCircuitAfterWrite", () => {
+  it("returns false when multiWriteIntent is true even after a successful write", () => {
+    assert.equal(
+      shouldShortCircuitAfterWrite({
+        toolResults: loneWrite({ name: "roam_create_block" }),
+        approvedPlan: null,
+        settingOn: true,
+        writeToolNames: SHORT_WRITE_TOOL_NAMES,
+        multiWriteIntent: true,
+      }),
+      false
+    );
+  });
+
   it("returns true for a lone roam_create_block success when settingOn true", () => {
     assert.equal(
       shouldShortCircuitAfterWrite({

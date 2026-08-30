@@ -2076,8 +2076,17 @@ async function createRoamBlock(parentUid, text, order = "last") {
     const uid = api.util.generateUID();
     const safeText = truncateRoamBlockText(text);
 
-    // Support numeric order (pass-through), "first" → 0, anything else → "last"
-    const resolvedOrder = typeof order === "number" ? order : (order === "first" ? 0 : "last");
+    // Support numeric order (number or digit string), "first" → 0, else → "last"
+    let resolvedOrder;
+    if (typeof order === "number" && Number.isFinite(order) && order >= 0) {
+      resolvedOrder = Math.floor(order);
+    } else if (order === "first") {
+      resolvedOrder = 0;
+    } else if (/^\d+$/.test(String(order ?? "").trim())) {
+      resolvedOrder = Number(String(order).trim());
+    } else {
+      resolvedOrder = "last";
+    }
 
     // Warm Roam's internal cache by pulling the parent's children before creating.
     // This prevents "n.map is not a function" when Roam's internal children array is stale/null.
