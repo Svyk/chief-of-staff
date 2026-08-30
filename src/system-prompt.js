@@ -5,6 +5,8 @@
 //
 // All external dependencies injected via initSystemPrompt().
 
+import { isMultiWriteGraphIntent } from "./multi-write-intent.js";
+
 let deps = {};
 
 // ─── Module-scoped state ───────────────────────────────────────────────────────
@@ -93,6 +95,12 @@ function detectPromptSections(userMessage) {
   // Roam syntax reference — when message suggests content creation/writing in Roam
   if (/\b(creat|writ|add|build|draft|outline|page|block|table|kanban|mermaid|embed|template|attribute|tag|link|heading|format|markdown|restructur|reorganis|refactor|rewrite|updat|import)\b/.test(text)) {
     sections.add("roam_syntax");
+  }
+
+  // Multi-step graph edits — keep the "don't stop after the first write" nudge
+  // out of casual chat; only inject when the detector fires.
+  if (isMultiWriteGraphIntent(userMessage)) {
+    sections.add("multi_write");
   }
 
   // Graph hygiene — orphan pages, stale/broken links
@@ -319,6 +327,12 @@ No skills page found yet. Create [[Chief of Staff/Skills]] with one top-level bl
 
   const roamSyntaxSection = sections.has("roam_syntax") ? buildRoamSyntaxSection() : "";
 
+  const multiWriteSection = sections.has("multi_write")
+    ? `## Multi-write graph edit
+
+This request needs many graph writes. Keep calling write tools until every requested block is created, moved, or updated; do not stop after the first successful write. Prefer roam_batch_write or roam_create_blocks when several siblings belong under one parent; use after_uid for mid-list placement.`
+    : "";
+
   const graphHygieneSection = sections.has("graph_hygiene")
     ? `## Graph Hygiene Tools
 
@@ -393,7 +407,7 @@ For Roam:
 - Use roam_get_page or roam_get_daily_page to locate context before writing
 - Use roam_open_page to navigate the user to a page in Roam's main window
 - When referencing Roam pages in your response, use [[Page Title]] syntax — these become clickable links in the chat panel. Never wrap [[Page Title]] or ((block-ref)) in backticks — that turns them into plain code and breaks the link
-- Use roam_create_block only for single blocks when the user asks to save/write into Roam. For mid-list placement (insert a season after Winter Soldier, etc.), pass after_uid of the sibling above the insert point — do not rely on first/last alone
+- Use roam_create_block only for single blocks when the user asks to save/write into Roam. For mid-list placement (e.g. inserting an item after a specific existing block rather than at the end), pass after_uid of the sibling directly above the insert point — do not rely on first/last alone
 - Use roam_create_blocks with batches param to write to multiple locations in one call
 - For structured multi-section output (reviews, briefings, outlines), prefer roam_batch_write with markdown over multiple roam_create_block/roam_create_blocks calls — it handles heading hierarchy, nested lists, and formatting natively. after_uid works here too for mid-list inserts
 - Use roam_update_block to edit existing block text by UID
@@ -678,6 +692,7 @@ Each advisor consultation costs significantly more than your own reasoning. Use 
     deps.sanitiseUserContentForPrompt(coreInstructions + verbosityInstructions),
     advisorSection,    // static content, no sanitisation needed
     roamSyntaxSection, // static content, no sanitisation needed
+    multiWriteSection, // static content, no sanitisation needed
     webFetchSection,   // static content, no sanitisation needed
     graphHygieneSection, // static content, no sanitisation needed
     extensionDocsSection, // static content, no sanitisation needed
@@ -697,6 +712,7 @@ Each advisor consultation costs significantly more than your own reasoning. Use 
     coreInstructions: coreInstructions.length,
     advisorSection: advisorSection.length,
     roamSyntax: roamSyntaxSection.length,
+    multiWrite: multiWriteSection.length,
     webFetch: webFetchSection.length,
     graphHygiene: graphHygieneSection.length,
     extensionDocs: extensionDocsSection.length,
