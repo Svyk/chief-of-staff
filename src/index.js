@@ -211,6 +211,7 @@ import {
   buildSettingsConfig,
   remountSettingsPanel,
   clampSkillMaxIterations,
+  clampAgentMaxIterations,
 } from "./settings-config.js";
 import {
   initOpenAiCodexAuth,
@@ -405,6 +406,7 @@ const SETTINGS_KEYS = {
   llmModelSmokeResults: "llm-model-smoke-results",
   postWriteShortCircuit: "post-write-short-circuit",
   claimedActionEscalationAllProviders: "claimed-action-escalation-all-providers",
+  agentMaxIterations: "agent-max-iterations",
   skillMaxIterations: "skill-max-iterations",
   skillContinueAfterWrite: "skill-continue-after-write",
   autoApproveMode: "auto-approve-mode",
@@ -415,8 +417,7 @@ const SETTINGS_KEYS = {
 const TOOLS_SCHEMA_VERSION = 3;
 const AUTH_POLL_INTERVAL_MS = 9000;
 const AUTH_POLL_TIMEOUT_MS = 180000;
-const MAX_AGENT_ITERATIONS = 20;
-const MAX_AGENT_ITERATIONS_SKILL = 16;    // Extended cap when gathering guard activates (skills need more iterations)
+const MAX_AGENT_ITERATIONS_SKILL = 16;    // Fallback constant; live value comes from getSkillMaxIterations()
 const MAX_TOOL_CALLS_PER_ITERATION = 4;   // Caps tool calls from a single LLM response (prevents budget blowout)
 const MAX_TOOL_CALLS_PER_ITERATION_SKILL = 8; // Higher cap when gathering guard is active (skills need parallel data gathering)
 const MAX_CALLS_PER_TOOL_PER_LOOP = 10;   // Caps how many times the same tool can be called across the loop
@@ -1406,13 +1407,15 @@ function getSettingNumber(extensionAPI, key, fallbackValue = 0) {
 }
 
 /**
- * Clamp the skill max iterations setting to 8–40 with a fallback of 16.
- * Pure helper — re-exported from settings-config.js so tests can import it
- * without a full module mock.
- *   - undefined / null / "" / NaN / non-numeric → 16
- *   - below 8 → 8, above 40 → 40
- *   - integers and numeric strings in range pass through (floor if float)
+ * Reads the agent-max-iterations setting (normal chat), falling back through
+ * the raw stored value to the clamp default (20). Live getter on agent-loop
+ * deps so a settings change applies without a full extension rewrite.
  */
+function getAgentMaxIterations() {
+  const ext = extensionAPIRef;
+  const raw = ext?.settings?.get?.(SETTINGS_KEYS.agentMaxIterations);
+  return clampAgentMaxIterations(raw);
+}
 
 /**
  * Reads the skill-max-iterations setting, falling back through the raw stored
@@ -7127,6 +7130,7 @@ function onload({ extensionAPI }) {
     getAvailableToolSchemas,
     runAgentLoopWithFailover,
     SETTINGS_KEYS,
+    get MAX_AGENT_ITERATIONS() { return getAgentMaxIterations(); },
     get MAX_AGENT_ITERATIONS_SKILL() { return getSkillMaxIterations(); },
     MEMORY_PAGE_TITLES_BASE, MEMORY_TOTAL_MAX_CHARS, SOURCE_TOOL_NAME_MAP,
     getApiKeyForProvider: (ext, p) => getApiKeyForProvider(ext, p),
@@ -7178,7 +7182,7 @@ function onload({ extensionAPI }) {
     updateChatPanelCostIndicator,
     getToastTheme,
     isUnloadInProgress: () => unloadInProgress,
-    MAX_AGENT_ITERATIONS,
+    get MAX_AGENT_ITERATIONS() { return getAgentMaxIterations(); },
     get MAX_AGENT_ITERATIONS_SKILL() { return getSkillMaxIterations(); },
     MAX_TOOL_CALLS_PER_ITERATION,
     MAX_TOOL_CALLS_PER_ITERATION_SKILL,

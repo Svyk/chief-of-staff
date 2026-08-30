@@ -56,6 +56,24 @@ export function clampSkillMaxIterations(raw) {
   return floored;
 }
 
+/**
+ * Clamp the chat agent max iterations setting to 10–40 with a fallback of 20.
+ * Pure helper — no deps, safe to import directly from tests.
+ *   - undefined / null / "" / NaN / non-numeric → 20
+ *   - below 10 → 10, above 40 → 40
+ *   - integers and numeric strings in range pass through (floor if float)
+ */
+export function clampAgentMaxIterations(raw) {
+  const fallback = 20;
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  const num = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(num)) return fallback;
+  const floored = Math.floor(num);
+  if (floored < 10) return 10;
+  if (floored > 40) return 40;
+  return floored;
+}
+
 export function rebuildSettingsPanel(extensionAPI) {
   setTimeout(() => {
     extensionAPI.settings.panel.create(buildSettingsConfig(extensionAPI));
@@ -950,6 +968,16 @@ export function buildSettingsConfig(extensionAPI) {
         action: {
           type: "switch",
           value: deps.getSettingBool(extensionAPI, deps.SETTINGS_KEYS.claimedActionEscalationAllProviders, true)
+        }
+      },
+      {
+        id: deps.SETTINGS_KEYS.agentMaxIterations,
+        name: "Agent max iterations",
+        description: "Caps agent-loop iterations for normal chat (not skills). Raise for weaker models that burn one iteration per tool call, or for long multi-write rearranges. Multi-write intents auto-boost to at least 32. 10–40, default 20.",
+        action: {
+          type: "input",
+          value: deps.getSettingString(extensionAPI, deps.SETTINGS_KEYS.agentMaxIterations, "20"),
+          placeholder: "20"
         }
       },
       {
