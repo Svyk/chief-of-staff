@@ -502,7 +502,7 @@ test("resolveConfiguredScheduleParent returns null for empty input", async () =>
 // ── User-text clocks ─────────────────────────────────────────────────────────
 
 test("build stamp bumped for the move build", () => {
-  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260827-move");
+  assert.equal(COS_SCHEDULE_BLOCK_BUILD, "20260829-overlap-allow");
 });
 
 test("parseFlexibleTime covers the full token table", () => {
@@ -677,6 +677,31 @@ test("buildForcedScheduleToolCall: overlap follow-up uses last refused window", 
   assert.deepEqual(call, {
     name: "cos_schedule_block",
     arguments: { start: "19:00", end: "21:00", title: "Laundry", collide: "allow" },
+  });
+});
+
+test("buildForcedScheduleToolCall: allow overlapping timed blocks retries last window", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const pageUid = g.addPage("August 27th, 2026");
+  const parentUid = g.insertBlock(pageUid, NAUTILUS_STRING);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} standup");
+  g.insertBlock(parentUid, `09:00 - 10:00 (**60'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "09:00", end: "10:00", title: "Deep work",
+  });
+  assert.equal(refused.success, false);
+
+  // Setting-name phrase must not be parsed as anchor "timed blocks".
+  assert.deepEqual(buildForcedScheduleToolCall("allow overlapping timed blocks"), {
+    name: "cos_schedule_block",
+    arguments: { start: "09:00", end: "10:00", title: "Deep work", collide: "allow" },
+  });
+  assert.deepEqual(buildForcedScheduleToolCall("yes, allow overlapping"), {
+    name: "cos_schedule_block",
+    arguments: { start: "09:00", end: "10:00", title: "Deep work", collide: "allow" },
   });
 });
 

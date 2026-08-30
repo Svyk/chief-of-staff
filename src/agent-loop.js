@@ -344,7 +344,7 @@ export function shouldShortCircuitAfterCollision({ toolResults, skillActive, ski
 
 export function collisionShortCircuitMessage(result) {
   const colliding = result?.colliding_string ?? "";
-  return `Time collision: ${colliding}\nThat window is taken. Reply overlap to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.`;
+  return `Time collision: ${colliding}\nThat window is taken. Reply overlap or allow overlapping timed blocks to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.`;
 }
 
 // ── Core agent loop ─────────────────────────────────────────────────────────
@@ -810,18 +810,25 @@ export async function runAgentLoop(userMessage, options = {}) {
       // no tool call at all — inject the cos_schedule_block call the user
       // asked for (built from THEIR times, not the model's prose). Downstream
       // guards then see a real tool call; no empty-response nudge is sent.
+      // Overlap follow-ups also replace a weak/wrong cos_schedule_block the
+      // model invented (Kimi often re-refuses instead of collide:allow).
       if (!readOnlyTools && !planMode) {
         const forced = buildForcedScheduleToolCalls(userMessage);
         if (forced.length >= 1) {
           const onlySchedule = toolCalls.length === 0
             || toolCalls.every((tc) => tc.name === "cos_schedule_block");
           const hasNonSchedule = toolCalls.some((tc) => tc.name && tc.name !== "cos_schedule_block");
+          const overlapAllowRetry = forced.length === 1
+            && forced[0]?.arguments?.collide === "allow";
           if (forced.length >= 2 && onlySchedule && !hasNonSchedule) {
             toolCalls = forced;
             deps.debugLog("[Chief flow] Force-dispatch: replaced cos_schedule_block batch for multi-window schedule request.");
           } else if (toolCalls.length === 0) {
             toolCalls = forced;
             deps.debugLog("[Chief flow] Force-dispatch: injected cos_schedule_block for a timed-block request the model answered without tools.");
+          } else if (overlapAllowRetry && onlySchedule && !hasNonSchedule) {
+            toolCalls = forced;
+            deps.debugLog("[Chief flow] Force-dispatch: replaced cos_schedule_block with last-collision overlap allow retry.");
           }
         }
       }

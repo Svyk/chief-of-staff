@@ -16,9 +16,9 @@ const BLOCK_REF_RE = /\(\(([^()\s]+)\)\)/;
 
 const NAUTILUS_MARKER = "roam-render-Nautilus-Log-cljs";
 // Runtime stamp so a hosted-URL install can prove this build (grep extension.js / window).
-export const COS_SCHEDULE_BLOCK_BUILD = "20260827-move";
-const COLLISION_REFUSE_SUFFIX = " Reply overlap to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.";
-const COLLISION_ASK_SUFFIX = " Ask the user: overlap to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.";
+export const COS_SCHEDULE_BLOCK_BUILD = "20260829-overlap-allow";
+const COLLISION_REFUSE_SUFFIX = " Reply overlap or allow overlapping timed blocks to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.";
+const COLLISION_ASK_SUFFIX = " Ask the user: overlap or allow overlapping timed blocks to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time.";
 const MOVE_CLOCKS_HINT = "Say move 21:00-23:00 to shift the existing timed block.";
 const SMARTBLOCK_MARKER = "SmartBlock:Double timestamp buttons2";
 const CHILD_PULL_PATTERN = "[:block/uid {:block/children [:block/uid :block/string :block/order]}]";
@@ -250,6 +250,8 @@ function cleanAnchorName(name) {
 export function parseOverlapAnchor(text) {
   const raw = String(text || "");
   if (!raw.trim()) return null;
+  // Setting-name confirms are not "overlap with <slot>" anchors.
+  if (isAllowOverlappingPhrase(raw)) return null;
   let m;
   m = /\bsame\s+time\s+as\s+(?:we\s+are|we're|I\s+am|I'm)\s+(?:watching|doing|seeing|playing)\s+(.+)/i.exec(raw);
   if (m) return cleanAnchorName(m[1]);
@@ -264,7 +266,12 @@ export function parseOverlapAnchor(text) {
   m = /\balongside\s+(.+)/i.exec(raw);
   if (m) return cleanAnchorName(m[1]);
   m = /\boverlapp?(?:ing)?(?:\s+with)?\s+(.+)/i.exec(raw);
-  if (m) return cleanAnchorName(m[1]);
+  if (m) {
+    const name = cleanAnchorName(m[1]);
+    // "overlapping timed blocks" (from the setting name) is not a slot title.
+    if (!name || OVERLAP_ANCHOR_NOISE_RE.test(name)) return null;
+    return name;
+  }
   return null;
 }
 
@@ -326,7 +333,11 @@ export function findUniqueScheduleSlotByTitle(children, anchor, extraTexts) {
 // ── Last refused window (follow-up "overlap") ────────────────────────────────
 
 const LAST_SCHEDULE_COLLISION_TTL_MS = 5 * 60 * 1000;
-const OVERLAP_TITLE_NOISE_RE = /\b(?:that'?s\s+ok|ok|yes|please|thanks|same\s+time|at\s+the\s+same\s+time|both\s+at\s+(?:the\s+)?same\s+time|overlapp?(?:ing)?|in\s+parallel|alongside|concurrent(?:ly)?|double[-\s]?book|while|during)\b/gi;
+const OVERLAP_TITLE_NOISE_RE = /\b(?:that'?s\s+ok|ok|yes|please|thanks|allow|same\s+time|at\s+the\s+same\s+time|both\s+at\s+(?:the\s+)?same\s+time|overlapp?(?:ing)?|timed\s+blocks?|in\s+parallel|alongside|concurrent(?:ly)?|double[-\s]?book|while|during)\b/gi;
+/** Setting-name / confirm phrases that are not slot anchors. */
+const OVERLAP_ANCHOR_NOISE_RE = /^(?:timed\s+blocks?|blocks?|allow(?:\s+overlapp?(?:ing)?)?)$/i;
+/** "allow overlapping timed blocks" (and close variants) — setting name users quote back. */
+const ALLOW_OVERLAPPING_PHRASE_RE = /^\s*(?:yes[,.]?\s*)?allow\s+overlapp?(?:ing)?(?:\s+timed\s+blocks?)?\s*[.!?]?\s*$/i;
 
 let lastScheduleCollision = null;
 
@@ -342,10 +353,16 @@ export function isNoNewScheduleTitle(title) {
   return !stripped;
 }
 
+/** True for bare overlap confirms, including the Advanced setting display name. */
+export function isAllowOverlappingPhrase(text) {
+  return ALLOW_OVERLAPPING_PHRASE_RE.test(String(text || "").trim());
+}
+
 /** Bare "overlap" or overlap confirm with no new clocks, anchor, or title. */
-function isShortOverlapConfirmation(userMessage, args = {}, fromUser = null) {
+export function isShortOverlapConfirmation(userMessage, args = {}, fromUser = null) {
   const msg = String(userMessage || "").trim();
   if (/^overlap\b/i.test(msg)) return true;
+  if (isAllowOverlappingPhrase(msg)) return true;
   if (!isOverlapScheduleIntent(msg)) return false;
   const fields = fromUser || parseScheduleFieldsFromUserText(msg);
   if (fields.start && fields.end) return false;
@@ -1067,12 +1084,18 @@ export function buildScheduleBlockTool(deps) {
       }
 
       // ── Place (default) ───────────────────────────────────────────────────
+      // Bare confirm ("overlap" / "allow overlapping timed blocks") retries the
+      // refused window. Prefer the stored title over a model-invented one —
+      // the user did not name a new task in the confirm reply.
       if (
-        !title
-        && isShortOverlapConfirmation(userMessage, args, fromUser)
-        && lastFresh
+        lastFresh
         && lastFresh.parent_uid === parentUid
         && lastFresh.title
+        && (
+          (!title && isShortOverlapConfirmation(userMessage, args, fromUser))
+          || isAllowOverlappingPhrase(userMessage)
+          || /^overlap\b/i.test(String(userMessage || "").trim())
+        )
       ) {
         title = lastFresh.title;
       }

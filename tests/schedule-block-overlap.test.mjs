@@ -8,6 +8,9 @@ import {
   clearLastScheduleCollision,
   getLastScheduleCollision,
   parseSlotLine,
+  isAllowOverlappingPhrase,
+  isShortOverlapConfirmation,
+  buildForcedScheduleToolCall,
 } from "../src/schedule-block.js";
 
 const NAUTILUS_STRING = "{{roam/render: ((roam-render-Nautilus-Log-cljs))}}";
@@ -150,6 +153,50 @@ test("parseOverlapAnchor extracts names and strips noise", () => {
   assert.equal(parseOverlapAnchor("during lunch"), "lunch");
   assert.equal(parseOverlapAnchor("while watching movie night"), "movie night");
   assert.equal(parseOverlapAnchor("overlap with standup please"), "standup");
+});
+
+test("allow overlapping timed blocks is confirm phrase, not an anchor", () => {
+  assert.equal(isAllowOverlappingPhrase("allow overlapping timed blocks"), true);
+  assert.equal(isAllowOverlappingPhrase("yes, allow overlapping"), true);
+  assert.equal(isAllowOverlappingPhrase("allow overlap"), true);
+  assert.equal(isAllowOverlappingPhrase("overlap with lunch"), false);
+  assert.equal(parseOverlapAnchor("allow overlapping timed blocks"), null);
+  assert.equal(parseOverlapAnchor("yes, allow overlapping timed blocks."), null);
+  assert.equal(isShortOverlapConfirmation("allow overlapping timed blocks"), true);
+  assert.equal(isShortOverlapConfirmation("yes, allow overlapping"), true);
+});
+
+test("follow-up allow overlapping timed blocks reuses the first refused window", async () => {
+  clearLastScheduleCollision();
+  const g = makeFakeGraph();
+  const { pageUid, parentUid } = setupParent(g);
+  const todo = g.insertBlock(pageUid, "{{[[TODO]]}} standup");
+  g.insertBlock(parentUid, `09:00 - 10:00 (**60'**) ((${todo}))`);
+  const tool = buildScheduleBlockTool(g.deps);
+
+  const refused = await tool.execute({
+    date: "August 27th, 2026", start: "09:00", end: "10:00", title: "Deep work",
+  });
+  assert.equal(refused.success, false);
+
+  const forced = buildForcedScheduleToolCall("allow overlapping timed blocks");
+  assert.deepEqual(forced, {
+    name: "cos_schedule_block",
+    arguments: { start: "09:00", end: "10:00", title: "Deep work", collide: "allow" },
+  });
+
+  g.deps.getAgentUserMessage = () => "allow overlapping timed blocks";
+  const allowed = await tool.execute({
+    date: "August 27th, 2026", start: "11:00", end: "12:00", title: "Wrong",
+  });
+
+  assert.equal(allowed.success, true);
+  assert.match(allowed.slot_string, /^09:00 - 10:00/);
+  assert.equal(allowed.overlapped, true);
+  // kind=task slot lines hold ((uid)); title lives on the TODO.
+  const todoUid = allowed.task_uid;
+  assert.ok(todoUid);
+  assert.match(g.blocks.get(todoUid).string, /Deep work/i);
 });
 
 // ── Overlap writes ───────────────────────────────────────────────────────────
@@ -602,7 +649,7 @@ test("collide ask returns colliding_string and does not write", async () => {
 
   assert.equal(result.success, false);
   assert.equal(result.colliding_string, before);
-  assert.match(result.error, /Ask the user: overlap to keep both/);
+  assert.match(result.error, /Ask the user: overlap or allow overlapping timed blocks to keep both/);
   assert.equal(g.childrenOf(parentUid).length, 1);
 });
 
