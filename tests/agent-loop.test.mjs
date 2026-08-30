@@ -441,7 +441,7 @@ describe("collisionShortCircuitMessage", () => {
     assert.ok(msg.includes("21:00 - 00:00 (**180'**) ((abc))"));
     assert.equal(
       msg,
-      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time."
+      "Time collision: 21:00 - 00:00 (**180'**) ((abc))\nThat window is taken. Reply overlap or allow overlapping timed blocks to keep both, move 21:00-23:00 to shift the existing timed block, or pick a different time."
     );
     assert.match(msg, /\bmove\b/i, "collision copy must mention move");
     assert.match(msg, /21:00-23:00/, "collision copy must include a time example");
