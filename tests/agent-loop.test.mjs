@@ -27,8 +27,9 @@ import {
   shouldShortCircuitAfterCollision,
   collisionShortCircuitMessage,
   isMultiWriteGraphIntent,
+  resolveMultiWriteMaxIterations,
 } from "../src/agent-loop.js";
-import { clampSkillMaxIterations } from "../src/settings-config.js";
+import { clampSkillMaxIterations, clampAgentMaxIterations } from "../src/settings-config.js";
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -494,6 +495,26 @@ describe("isMultiWriteGraphIntent", () => {
   });
 });
 
+describe("resolveMultiWriteMaxIterations", () => {
+  it("boosts the default chat cap of 20 up to 32", () => {
+    assert.equal(resolveMultiWriteMaxIterations(20), 32);
+  });
+
+  it("keeps a higher user setting", () => {
+    assert.equal(resolveMultiWriteMaxIterations(36), 36);
+    assert.equal(resolveMultiWriteMaxIterations(40), 40);
+  });
+
+  it("never exceeds hardCap", () => {
+    assert.equal(resolveMultiWriteMaxIterations(50), 40);
+    assert.equal(resolveMultiWriteMaxIterations(20, { hardCap: 30 }), 30);
+  });
+
+  it("respects a custom minBoost", () => {
+    assert.equal(resolveMultiWriteMaxIterations(20, { minBoost: 28 }), 28);
+  });
+});
+
 describe("shouldShortCircuitAfterWrite", () => {
   it("returns false when multiWriteIntent is true even after a successful write", () => {
     assert.equal(
@@ -867,6 +888,40 @@ describe("clampSkillMaxIterations", () => {
     assert.equal(clampSkillMaxIterations(7.5), 8);
     assert.equal(clampSkillMaxIterations(40.5), 40);
     assert.equal(clampSkillMaxIterations(99.9), 40);
+  });
+});
+
+// ── Agent (chat) max iterations clamp ───────────────────────────────────────
+
+describe("clampAgentMaxIterations", () => {
+  it("returns 20 for undefined / null / empty string", () => {
+    assert.equal(clampAgentMaxIterations(undefined), 20);
+    assert.equal(clampAgentMaxIterations(null), 20);
+    assert.equal(clampAgentMaxIterations(""), 20);
+  });
+
+  it("returns 20 for NaN / non-numeric strings", () => {
+    assert.equal(clampAgentMaxIterations(NaN), 20);
+    assert.equal(clampAgentMaxIterations("abc"), 20);
+  });
+
+  it("returns 10 as the minimum", () => {
+    assert.equal(clampAgentMaxIterations(7), 10);
+    assert.equal(clampAgentMaxIterations(0), 10);
+    assert.equal(clampAgentMaxIterations("9"), 10);
+  });
+
+  it("returns 40 as the maximum", () => {
+    assert.equal(clampAgentMaxIterations(99), 40);
+    assert.equal(clampAgentMaxIterations("1000"), 40);
+  });
+
+  it("passes through integers and numeric strings in range", () => {
+    assert.equal(clampAgentMaxIterations(20), 20);
+    assert.equal(clampAgentMaxIterations(10), 10);
+    assert.equal(clampAgentMaxIterations(40), 40);
+    assert.equal(clampAgentMaxIterations("32"), 32);
+    assert.equal(clampAgentMaxIterations(32.9), 32);
   });
 });
 

@@ -230,6 +230,21 @@ export function isMultiWriteGraphIntent(text) {
 }
 
 /**
+ * Raise the iteration cap for multi-write rearrange runs.
+ * Weaker models often spend one iteration per tool call; a season insert needs
+ * more than the default chat cap. Pure helper — no deps.
+ *   - base below minBoost → minBoost
+ *   - base already higher → keep base
+ *   - never above hardCap (default 40)
+ */
+export function resolveMultiWriteMaxIterations(baseMax, { minBoost = 32, hardCap = 40 } = {}) {
+  const base = Number.isFinite(Number(baseMax)) ? Math.floor(Number(baseMax)) : 20;
+  const floor = Number.isFinite(Number(minBoost)) ? Math.floor(Number(minBoost)) : 32;
+  const cap = Number.isFinite(Number(hardCap)) ? Math.floor(Number(hardCap)) : 40;
+  return Math.min(cap, Math.max(base, floor));
+}
+
+/**
  * Decide whether to end the run after a lone successful write.
  * Pure helper — no deps, no mock.module needed.
  *
@@ -406,6 +421,17 @@ export async function runAgentLoop(userMessage, options = {}) {
   } = options;
   let maxIterations = initialMaxIterations;
   let gatheringGuard = initialGatheringGuard;
+
+  // Multi-write rearrange (watch-order inserts, move many TODOs): raise the
+  // cap the same way gathering-guard does for skills — default 20 is too low
+  // when a model burns one iteration per create/move.
+  if (isMultiWriteGraphIntent(userMessage)) {
+    const boosted = resolveMultiWriteMaxIterations(maxIterations);
+    if (boosted > maxIterations) {
+      deps.debugLog(`[Chief flow] Multi-write intent boosting maxIterations: ${maxIterations} → ${boosted}`);
+      maxIterations = boosted;
+    }
+  }
 
   const extensionAPI = deps.getExtensionAPIRef();
   if (!extensionAPI) throw new Error("Extension API not ready");
